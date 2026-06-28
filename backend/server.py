@@ -13,10 +13,12 @@ from typing import Optional
 import bcrypt
 import jwt
 import httpx
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
+
+from promptlets_data import PROMPTLETS
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -124,8 +126,70 @@ def public_user(user: dict) -> dict:
         "picture": user.get("picture"),
         "provider": user.get("provider", "email"),
         "role": user.get("role", "user"),
+        "subscription": user.get("subscription", "free"),
+        "email_verified": bool(user.get("email_verified", False)),
         "created_at": user.get("created_at"),
     }
+
+
+FREE_LIMIT = 100
+PLAN_LIMITS = {"free": FREE_LIMIT, "pro": None}  # None == unlimited
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_iso(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.fromisoformat(value)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+async def ensure_usage_period(user: dict) -> dict:
+    """Reset prompts_used if the 30-day window has elapsed."""
+    start = parse_iso(user.get("usage_period_start"))
+    now = datetime.now(timezone.utc)
+    if not start or (now - start) >= timedelta(days=30):
+        new_start = now.isoformat()
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"prompts_used": 0, "usage_period_start": new_start}},
+        )
+        user["prompts_used"] = 0
+        user["usage_period_start"] = new_start
+    return user
+
+
+def usage_summary(user: dict) -> dict:
+    plan = user.get("subscription", "free")
+    limit = PLAN_LIMITS.get(plan)
+    used = int(user.get("prompts_used", 0))
+    start = parse_iso(user.get("usage_period_start"))
+    if start:
+        period_end = start + timedelta(days=30)
+    else:
+        period_end = None
+    return {
+        "plan": plan,
+        "limit": limit,
+        "used": used,
+        "remaining": (limit - used) if limit is not None else None,
+        "period_start": user.get("usage_period_start"),
+        "period_end": period_end.isoformat() if period_end else None,
+    }
+
+
+def can_access_promptlet(user: dict, promptlet: dict) -> bool:
+    if promptlet.get("plan") == "free":
+        return True
+    return user.get("subscription") == "pro"
 
 
 async def get_current_user(request: Request) -> dict:
@@ -192,6 +256,18 @@ class NewsletterBody(BaseModel):
     email: EmailStr
 
 
+class VerifyEmailBody(BaseModel):
+    token: str
+
+
+class FavoriteBody(BaseModel):
+    favorite: bool
+
+
+class UpgradeBody(BaseModel):
+    plan: str = Field(pattern="^(free|pro)$")
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -208,6 +284,7 @@ async def register(body: RegisterBody, response: Response):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     user_id = f"user_{uuid.uuid4().hex[:12]}"
+    verification_token = secrets.token_urlsafe(32)
     user_doc = {
         "user_id": user_id,
         "email": email,
@@ -216,9 +293,18 @@ async def register(body: RegisterBody, response: Response):
         "provider": "email",
         "role": "user",
         "picture": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "subscription": "free",
+        "prompts_used": 0,
+        "usage_period_start": now_iso(),
+        "email_verified": False,
+        "email_verification_token": verification_token,
+        "created_at": now_iso(),
     }
     await db.users.insert_one(user_doc)
+    logger.info(
+        "Verify email for %s -> %s/verify-email?token=%s",
+        email, FRONTEND_URL, verification_token,
+    )
     access = create_access_token(user_id, email)
     refresh = create_refresh_token(user_id)
     set_auth_cookies(response, access, refresh)
@@ -372,7 +458,11 @@ async def google_session(body: GoogleSessionBody, response: Response):
             "provider": "google",
             "role": "user",
             "password_hash": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "subscription": "free",
+            "prompts_used": 0,
+            "usage_period_start": now_iso(),
+            "email_verified": True,  # Google verifies email for us
+            "created_at": now_iso(),
         }
         await db.users.insert_one(user)
     else:
@@ -381,8 +471,10 @@ async def google_session(body: GoogleSessionBody, response: Response):
             {"$set": {
                 "name": user.get("name") or data.get("name") or email.split("@")[0],
                 "picture": data.get("picture") or user.get("picture"),
+                "email_verified": True,
             }},
         )
+        user["email_verified"] = True
 
     access = create_access_token(user["user_id"], email)
     refresh = create_refresh_token(user["user_id"])
@@ -420,6 +512,215 @@ async def contact(body: ContactBody):
 
 
 # ---------------------------------------------------------------------------
+# Email verification
+# ---------------------------------------------------------------------------
+@api.post("/auth/verify-email")
+async def verify_email(body: VerifyEmailBody):
+    user = await db.users.find_one({"email_verification_token": body.token})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email_verified": True}, "$unset": {"email_verification_token": ""}},
+    )
+    return {"ok": True}
+
+
+@api.post("/auth/resend-verification")
+async def resend_verification(user: dict = Depends(get_current_user)):
+    if user.get("email_verified"):
+        return {"ok": True, "already_verified": True}
+    token = secrets.token_urlsafe(32)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email_verification_token": token}},
+    )
+    logger.info(
+        "Resent verify-email link for %s -> %s/verify-email?token=%s",
+        user["email"], FRONTEND_URL, token,
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Promptlets marketplace
+# ---------------------------------------------------------------------------
+def serialize_promptlet(p: dict, user: Optional[dict] = None) -> dict:
+    locked = bool(user and not can_access_promptlet(user, p))
+    return {
+        "promptlet_id": p["promptlet_id"],
+        "slug": p["slug"],
+        "name": p["name"],
+        "category": p["category"],
+        "plan": p["plan"],
+        "description": p["description"],
+        "models": p["models"],
+        "gradient": p["gradient"],
+        "image_keyword": p.get("image_keyword", ""),
+        # Hide the actual prompt text for locked promptlets in list responses.
+        "prompt": None if locked else p["prompt"],
+        "locked": locked,
+    }
+
+
+@api.get("/promptlets")
+async def list_promptlets(
+    request: Request,
+    category: Optional[str] = Query(default=None),
+    plan: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+):
+    # Best-effort optional auth (so we can mark `locked` per user).
+    user = None
+    try:
+        user = await get_current_user(request)
+    except HTTPException:
+        user = None
+
+    mongo_filter: dict = {}
+    if category and category.lower() != "all":
+        mongo_filter["category"] = category
+    if plan and plan.lower() in {"free", "pro"}:
+        mongo_filter["plan"] = plan.lower()
+    if q:
+        mongo_filter["$or"] = [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"description": {"$regex": q, "$options": "i"}},
+            {"category": {"$regex": q, "$options": "i"}},
+        ]
+
+    docs = await db.promptlets.find(mongo_filter, {"_id": 0}).to_list(500)
+    favorites: set = set()
+    if user:
+        fav_docs = await db.favorites.find({"user_id": user["user_id"]}, {"_id": 0, "promptlet_id": 1}).to_list(1000)
+        favorites = {f["promptlet_id"] for f in fav_docs}
+
+    items = []
+    for d in docs:
+        s = serialize_promptlet(d, user)
+        s["favorited"] = s["promptlet_id"] in favorites
+        items.append(s)
+    categories = sorted({d["category"] for d in docs})
+    return {"items": items, "categories": categories, "total": len(items)}
+
+
+@api.get("/promptlets/{promptlet_id}")
+async def get_promptlet(promptlet_id: str, user: dict = Depends(get_current_user)):
+    p = await db.promptlets.find_one({"promptlet_id": promptlet_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Promptlet not found")
+    if not can_access_promptlet(user, p):
+        raise HTTPException(status_code=403, detail="Upgrade to Pro to access this promptlet")
+    fav = await db.favorites.find_one({"user_id": user["user_id"], "promptlet_id": promptlet_id})
+    out = serialize_promptlet(p, user)
+    out["favorited"] = bool(fav)
+    return out
+
+
+@api.post("/promptlets/{promptlet_id}/use")
+async def use_promptlet(promptlet_id: str, user: dict = Depends(get_current_user)):
+    p = await db.promptlets.find_one({"promptlet_id": promptlet_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Promptlet not found")
+    if not can_access_promptlet(user, p):
+        raise HTTPException(status_code=403, detail="Upgrade to Pro to use this promptlet")
+
+    user = await ensure_usage_period(user)
+    summary = usage_summary(user)
+    if summary["limit"] is not None and summary["used"] >= summary["limit"]:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've hit your {summary['limit']} prompt limit for this month. Upgrade to Pro for unlimited prompts.",
+        )
+
+    new_used = summary["used"] + 1
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"prompts_used": new_used}},
+    )
+    history_doc = {
+        "history_id": uuid.uuid4().hex,
+        "user_id": user["user_id"],
+        "promptlet_id": promptlet_id,
+        "promptlet_slug": p["slug"],
+        "promptlet_name": p["name"],
+        "category": p["category"],
+        "created_at": now_iso(),
+    }
+    await db.prompt_history.insert_one(history_doc)
+    return {
+        "ok": True,
+        "prompt": p["prompt"],
+        "promptlet": serialize_promptlet(p, {**user, "prompts_used": new_used}),
+        "usage": {**summary, "used": new_used, "remaining": (summary["limit"] - new_used) if summary["limit"] is not None else None},
+    }
+
+
+@api.post("/promptlets/{promptlet_id}/favorite")
+async def toggle_favorite(promptlet_id: str, body: FavoriteBody, user: dict = Depends(get_current_user)):
+    p = await db.promptlets.find_one({"promptlet_id": promptlet_id}, {"_id": 0, "promptlet_id": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="Promptlet not found")
+    if body.favorite:
+        await db.favorites.update_one(
+            {"user_id": user["user_id"], "promptlet_id": promptlet_id},
+            {"$set": {"created_at": now_iso()}},
+            upsert=True,
+        )
+    else:
+        await db.favorites.delete_one({"user_id": user["user_id"], "promptlet_id": promptlet_id})
+    return {"ok": True, "favorited": body.favorite}
+
+
+# ---------------------------------------------------------------------------
+# User dashboard data
+# ---------------------------------------------------------------------------
+@api.get("/me/usage")
+async def me_usage(user: dict = Depends(get_current_user)):
+    user = await ensure_usage_period(user)
+    return usage_summary(user)
+
+
+@api.get("/me/favorites")
+async def me_favorites(user: dict = Depends(get_current_user)):
+    favs = await db.favorites.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    ids = [f["promptlet_id"] for f in favs]
+    if not ids:
+        return {"items": []}
+    promptlets = await db.promptlets.find({"promptlet_id": {"$in": ids}}, {"_id": 0}).to_list(500)
+    by_id = {p["promptlet_id"]: p for p in promptlets}
+    items = []
+    for f in favs:
+        p = by_id.get(f["promptlet_id"])
+        if not p:
+            continue
+        s = serialize_promptlet(p, user)
+        s["favorited"] = True
+        s["favorited_at"] = f["created_at"]
+        items.append(s)
+    return {"items": items}
+
+
+@api.get("/me/history")
+async def me_history(limit: int = 20, user: dict = Depends(get_current_user)):
+    limit = max(1, min(100, limit))
+    rows = await db.prompt_history.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"items": rows}
+
+
+@api.post("/me/subscription")
+async def update_subscription(body: UpgradeBody, user: dict = Depends(get_current_user)):
+    # NOTE: stripe checkout integration will replace this; for MVP we let the
+    # signed-in user flip their own plan so the gating UX is demonstrable.
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"subscription": body.plan}},
+    )
+    user["subscription"] = body.plan
+    return {"ok": True, "subscription": body.plan, "usage": usage_summary(user)}
+
+
+# ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
@@ -429,7 +730,34 @@ async def on_startup():
     await db.login_attempts.create_index("identifier")
     await db.newsletter.create_index("email", unique=True)
     await db.password_reset_tokens.create_index("token", unique=True)
+    await db.promptlets.create_index("slug", unique=True)
+    await db.promptlets.create_index("category")
+    await db.favorites.create_index([("user_id", 1), ("promptlet_id", 1)], unique=True)
+    await db.prompt_history.create_index([("user_id", 1), ("created_at", -1)])
     await seed_admin()
+    await seed_promptlets()
+
+
+async def seed_promptlets():
+    """Idempotent upsert of the curated promptlet catalogue."""
+    for item in PROMPTLETS:
+        doc = {
+            "promptlet_id": f"plet_{item['slug']}",
+            "slug": item["slug"],
+            "name": item["name"],
+            "category": item["category"],
+            "plan": item["plan"],
+            "description": item["description"],
+            "prompt": item["prompt"],
+            "models": item["models"],
+            "gradient": item["gradient"],
+            "image_keyword": item.get("image_keyword", ""),
+        }
+        await db.promptlets.update_one(
+            {"slug": item["slug"]},
+            {"$set": doc, "$setOnInsert": {"created_at": now_iso()}},
+            upsert=True,
+        )
 
 
 async def seed_admin():
@@ -445,7 +773,11 @@ async def seed_admin():
             "provider": "email",
             "role": "admin",
             "picture": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "subscription": "pro",
+            "prompts_used": 0,
+            "usage_period_start": now_iso(),
+            "email_verified": True,
+            "created_at": now_iso(),
         })
         logger.info("Seeded admin user %s", admin_email)
     elif existing.get("password_hash") and not verify_password(admin_password, existing["password_hash"]):

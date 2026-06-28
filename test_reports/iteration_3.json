@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 3: PromptAI SaaS MVP end-to-end review. Wrote pytest backend suite (15 tests) + Playwright frontend flow against the deployed preview URL. Backend: 13/15 pass. Frontend: every requested critical user journey verified (signin → dashboard → upgrade → marketplace → search → favorite → history → forgot-password → reset-password → logout → ProtectedRoute). Only ONE real defect surfaces and it is the same on both ends: the seed catalog contains 26 promptlets (3 free Photo + 23 pro) instead of the 27 specified (24 pro). All 10 categories are present. Everything else — gating, 403/402 quota, favorites toggle, history newest-first, /me/usage shape, /me/subscription upgrade unlocking pro items, email verification (token logged + verify-email + resend invalidates old), password reset (forgot+reset+login with new password), withCredentials auth, ProtectedRoute redirects, sidebar nav, search/filter chips, badges, sonner toasts — works as specified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/promptlets",
+        "issue": "Catalog returns 26 items (23 pro + 3 free), spec calls for 27 (24 pro + 3 free). Root cause: PROMPTLETS list in /app/backend/promptlets_data.py only has 23 pro entries (Photo 3 + Website 3 + Coding 3 + App Development 3 + Marketing 3 + Writing 3 + Video 2 + Image Editing 2 + Business 2 + AI Agents 2 = 23 pro + 3 free = 26). One additional pro promptlet must be added to reach 24."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Marketplace card count",
+        "issue": "Only 26 promptlet cards render (data-testid copy-* count = 26, badge-pro-* = 23, badge-free-* = 3). Same root cause as backend — missing 1 pro entry in promptlets_data.py.",
+        "affected_selectors": ["[data-testid^=\"copy-\"]", "[data-testid^=\"badge-pro-\"]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Dashboard usage card (Pro state)",
+        "issues": ["When the plan is Pro, the card shows '0 / unlimited prompts' but the meta rows still render literal em-dashes for 'Period started —' and 'Resets —'. Pro users have no period boundary so this is technically correct but could be hidden / replaced with 'No limits' for polish."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Add one additional Pro promptlet to /app/backend/promptlets_data.py (any of the existing under-stocked categories — Video / Image Editing / Business / AI Agents only have 2 each) so the catalog total reaches 27 (24 Pro + 3 Free) as advertised in the marketing copy. Existing upsert seed logic will pick it up on next startup automatically."
+  ],
+  "critical_code_review_comments": [
+    "seed_admin() inserts admin with subscription='pro'; the review request states the admin should *start* as FREE so the gating + upgrade flow is testable. The seed never resets subscription on existing users, so an admin previously created as pro stays pro. For deterministic test setup, consider setting initial admin subscription to 'free' in seed_admin (this matches the iteration intent).",
+    "ensure_usage_period mutates a date string only; PLAN_LIMITS['pro'] = None so the /me/usage payload returns period_start/period_end = None for pro users. Dashboard UI shows literal em-dashes — gate the UI rows on `limit !== null`.",
+    "promptlets_data.py is the *single* source of truth for catalog size — add a runtime assert (or an explicit unit test) so any future trimming of PROMPTLETS that drops the count below 27 fails fast on import or on startup."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)",
+    "/app/test_reports/iteration_3.json (new)"
+  ],
+  "success_rate": {
+    "backend": "13/15 (~87%)",
+    "frontend": "100% of executed scenarios (catalog count short by 1 due to backend seed)"
+  },
+  "test_credentials": "admin@promptai.app / Admin@PromptAI2025 (worked). Test users created with prefix test_<hex>@example.com / Passw0rd!Test.",
+  "seed_data_creation": "Test users (test_<uuid>@example.com), one used 100/100 prompts to validate quota cap, several favorites + history rows on the admin account. Admin's subscription was reset to 'free' before frontend testing and was then upgraded back to 'pro' by the Upgrade flow.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite at /app/backend/tests/backend_test.py is the regression harness — re-run with `pytest backend/tests/backend_test.py -v`. Verify-email / password-reset tokens are extracted from /var/log/supervisor/backend.err.log via _tail_backend_log() (the lines start with 'Verify email for ... ?token=' and 'Password reset link for ... ?token='). Backend lowercases emails on insert, so always lowercase test emails before scraping the log. To validate the FREE→Photo-only copy / Pro-disabled UI label, create a fresh user via /signup (do NOT use admin which is pro after iteration 3 frontend run) and inspect copy-{slug} button disabled state on a pro card. After main agent ships the 27th promptlet, only the two TestPromptletsCatalog tests need to be re-run; everything else is already green.",
+  "rca of the issue": "Catalog short by 1: /app/backend/promptlets_data.py defines exactly 26 PROMPTLETS (3 Photo free + 23 Pro). The 'Pro = 24' figure stated in the problem statement is never matched in code. Mitigation: append one more dict to PROMPTLETS with plan='pro' in any category (e.g., a 3rd Video, Image Editing, Business, or AI Agents item). Seed function `seed_promptlets()` is idempotent upsert keyed on slug — adding a new entry is safe."
+}

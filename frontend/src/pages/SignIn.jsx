@@ -57,6 +57,9 @@ export default function SignIn() {
           {loading ? "Signing in..." : (<>Sign in <ArrowRight className="h-4 w-4" /></>)}
         </button>
       </form>
+      <div className="mt-4 text-center">
+        <Link to="/forgot-password" className="text-xs text-[#94A3B8] hover:text-white" data-testid="signin-forgot">Forgot your password?</Link>
+      </div>
       <p className="mt-6 text-sm text-[#94A3B8] text-center">
         Don’t have an account? <Link to="/signup" className="text-cyan hover:underline" data-testid="signin-go-signup">Create one</Link>
       </p>
