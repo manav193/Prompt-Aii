@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";;
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Copy, Check, Heart, Share2, Star, Eye, Download, Coins, Lock, Wand2, ArrowRight, BadgeCheck, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -23,20 +23,23 @@ export default function PromptDetail() {
   const [stars, setStars] = useState(0);
   const [review, setReview] = useState("");
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get(`/promptlets/${slug}/details`);
-      setData(data);
-      setFavorited(data.promptlet.favorited);
-      setStars(data.my_rating?.stars || 0);
-      setReview(data.my_rating?.review || "");
-    } catch (err) {
-      toast.error("Couldn't load this promptlet.");
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, [slug]);
+ const load = useCallback(async () => {
+  setLoading(true);
+  try {
+    const { data } = await api.get(`/promptlets/${slug}/details`);
+    setData(data);
+    setFavorited(data.promptlet.favorited);
+    setStars(data.my_rating?.stars || 0);
+    setReview(data.my_rating?.review || "");
+  } catch (err) {
+    toast.error("Couldn't load this promptlet.");
+  } finally {
+    setLoading(false);
+  }
+}, [slug]);
+ useEffect(() => {
+  load();
+}, [load]);
   useEffect(() => {
     api.get("/community/follows").then(({ data }) => {
       setFollowing(!!data.items?.find?.((f) => f.creator === "PromptAI Team"));
