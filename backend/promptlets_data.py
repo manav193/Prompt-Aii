@@ -407,4 +407,19 @@ PROMPTLETS = [
         "gradient": ["#10B981", "#3B82F6"],
         "image_keyword": "code review",
     },
+    {
+        "slug": "support-triage-agent",
+        "name": "Support triage agent",
+        "category": "AI Agents",
+        "plan": "pro",
+        "description": "Triages an incoming customer ticket: category, severity, suggested reply.",
+        "prompt": (
+            "You are a support triage agent for {{product}}. Given the customer message, "
+            "output JSON: {category, severity (P0..P3), root_cause_hypothesis, suggested_reply "
+            "(<120 words, on-brand for {{voice}}), escalate_to}.\n\nMessage:\n{{message}}"
+        ),
+        "models": ["Claude", "ChatGPT"],
+        "gradient": ["#06B6D4", "#10B981"],
+        "image_keyword": "customer support",
+    },
 ]

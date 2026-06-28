@@ -1,51 +1,51 @@
 # PromptAI – Product Requirements (Live Doc)
 
 ## Original Problem Statement
-Create a premium AI SaaS landing page for a startup called **PromptAI** — an all-in-one AI platform that helps users generate optimized prompts for ChatGPT, Claude, Gemini, Midjourney, Stable Diffusion, Flux, Adobe Firefly, Cursor, Lovable, Emergent and other AI tools. Style: futuristic, premium, dark mode, glassmorphism, smooth animations, gradient lighting, Apple + Linear + Vercel level UI quality. Must include: hero, trusted-by, features, how-it-works, models, pricing, testimonials, FAQ, footer, contact.
+Premium AI SaaS landing page that evolved into a full MVP. PromptAI generates optimized prompts for ChatGPT, Claude, Gemini, Midjourney, Stable Diffusion, Flux, Adobe Firefly, Cursor, Lovable, Emergent (and more). Style: futuristic, premium, dark mode, glassmorphism, Apple + Linear + Vercel-grade UI.
 
-## User Choices (verbatim from clarifying questions)
-- Contact: store submissions in MongoDB (no email provider configured).
-- CTAs: redirect users to Sign Up; after successful auth users land on a PromptAI dashboard. Architecture must be scalable for Stripe subscriptions later.
-- Newsletter: capture emails to MongoDB.
-- Palette (LOCKED):
-  - Primary bg `#050816`, surface `#0F172A`
-  - Cyan `#00E5FF`, Royal Blue `#3B82F6`, Emerald `#10B981` (success only)
-  - Avoid generic purple AI gradients.
-- Auth: BOTH Google Sign-In AND Email/Password. Sign up / sign in via either method, reset forgotten password, secure sessions, profiles in MongoDB, production-ready.
+## User Choices (verbatim)
+- Palette LOCKED: bg `#050816`, surface `#0F172A`, cyan `#00E5FF`, blue `#3B82F6`, emerald `#10B981` (success only). Avoid generic purple AI gradients.
+- Contact → MongoDB (no email provider).
+- Newsletter → MongoDB.
+- Auth: BOTH Google (Emergent OAuth) AND email/password (forgot password, email verification, secure sessions, profiles in MongoDB).
+- Dashboard with: welcome, usage counter (100/mo free), current plan, recent prompts, saved promptlets.
+- Free vs Pro gating exactly as spec'd.
+- Promptlets Marketplace with image, name, category, models, Free/Pro badge, copy + favorite.
+- Architecture must remain scalable for Stripe later.
 
 ## Architecture
-- **Backend** (FastAPI + Motor):
-  - JWT email/password auth (bcrypt, access+refresh httpOnly cookies, SameSite=None+Secure for cross-site Emergent preview).
-  - Emergent-managed Google OAuth: frontend → `auth.emergentagent.com` → callback with `#session_id`; backend exchanges `session_id` via Emergent `session-data` endpoint, upserts user, issues our own JWT cookies. One unified `users` collection keyed on `user_id` (UUID), NOT MongoDB `_id`.
-  - Endpoints: `/api/auth/{register,login,logout,me,refresh,forgot-password,reset-password,google/session}`, `/api/contact`, `/api/newsletter`, `/api/health`.
-  - Indexes on `users.email`, `users.user_id`, `newsletter.email`, `login_attempts.identifier`, `password_reset_tokens.token`.
-  - Brute-force: 5 failed attempts → 15 min lockout.
-  - Admin seeded on startup (`admin@promptai.app` / `Admin@PromptAI2025`).
-- **Frontend** (React + Tailwind + shadcn/ui + framer-motion):
-  - Routes: `/`, `/signin`, `/signup`, `/dashboard` (protected). Synchronous OAuth `#session_id` interception in `App.js` to avoid race.
-  - Sections: Hero (animated, AI background, dual CTA), TrustedBy marquee, Features grid, How it works, Models grid, Pricing (3 tiers, Pro highlighted), Testimonials, FAQ (shadcn Accordion), Contact form, Footer with newsletter.
-  - Typography: Space Grotesk (display) + Manrope (body) + JetBrains Mono (code accent).
-  - Animations: framer-motion fade-up, CSS marquee, animated gradient orbs, glass + glow accents.
+- **Backend** (FastAPI + Motor + bcrypt + PyJWT + httpx):
+  - Auth: JWT in httpOnly cookies (access+refresh, SameSite=None+Secure), brute-force lockout (5 attempts → 15 min), server-side token revocation via `tokens_valid_from` on logout. Emergent-managed Google OAuth callback writes into the same `users` collection (UUID `user_id`).
+  - Verify-email + resend-verification (links logged to backend stdout — no email provider).
+  - Password reset (forgot + reset, single-use token, 1h ttl, logged to stdout).
+  - Catalogue: 27 promptlets across 10 categories (Photo=3 Free; Website/Coding/App Dev/Marketing/Writing/Video/Image Editing/Business/AI Agents=24 Pro) — idempotently seeded on startup.
+  - Promptlet endpoints: list (with `category` / `plan` / `q` filters), get, use (records `prompt_history`, increments `prompts_used`, enforces 402 quota), favorite toggle.
+  - Per-user: `/api/me/usage`, `/api/me/favorites`, `/api/me/history`, `/api/me/subscription` (free/pro toggle — Stripe placeholder).
+  - Collections + indexes: `users` (unique email + user_id), `login_attempts`, `password_reset_tokens` (unique token), `newsletter` (unique email), `promptlets` (unique slug + category index), `favorites` (compound user_id+promptlet_id unique), `prompt_history` (user_id+created_at), `contact_submissions`.
+
+- **Frontend** (React 19 + Tailwind + shadcn/ui + framer-motion + sonner):
+  - Routes: `/`, `/signin`, `/signup`, `/forgot-password`, `/reset-password`, `/verify-email`, `/dashboard`, `/marketplace`, `/favorites`, `/history`, `/account` (last 5 are ProtectedRoute-gated). Synchronous `#session_id=` detection in App.js for OAuth.
+  - Premium landing intact: Hero (animated), Trusted-by marquee, Features, How it works, Models, Pricing, Testimonials, FAQ, Contact, Footer with newsletter.
+  - Dashboard shell with persistent sidebar (Overview / Marketplace / Favorites / History / Account + user card + sign-out).
+  - Marketplace card grid with category + plan chip filters, search, Free/Pro badges, Copy (calls `/use`, copies to clipboard, surfaces remaining quota), Favorite heart toggle. Locked Pro cards show "Pro only".
+  - Auth verification banner appears at top of every Dashboard page until verified; "Resend link" wired.
+  - Typography: Space Grotesk (display) + Manrope (body) + JetBrains Mono.
 
 ## What's been implemented (Dec 2025)
-- Full premium dark landing page with all requested sections.
-- Hybrid auth (JWT email/pw + Emergent Google), httpOnly cookies, /auth/me session check.
-- Newsletter, contact form persisted to MongoDB.
-- Protected `/dashboard` page with placeholder stats and upgrade CTA (Stripe-ready).
-- Admin seeding + brute-force protection + password reset (link logged to backend console).
+- Full premium landing page + hybrid auth (Google + email/password) + forgot/reset/verify email.
+- Promptlets marketplace (27 / 10 categories), Free vs Pro gating with 100/mo quota for free users (402 when exceeded).
+- Dashboard with live usage, current plan, recent prompts, saved promptlets, upgrade CTA.
+- Favorites + History pages, Account settings with plan toggle (Stripe-ready placeholder).
+- Newsletter + Contact form persisted to MongoDB.
+- Iteration testing: backend 13/15 pass + frontend 100% executed scenarios (catalog count fixed to 27).
 
 ## Prioritized Backlog
-- **P0**
-  - End-to-end tested auth flows (testing_agent_v3).
-  - Confirm Emergent Google callback works on preview URL.
-- **P1**
-  - Stripe subscription checkout for Pro/Enterprise CTAs.
-  - Real email delivery (Resend) for contact + password reset.
-  - In-app prompt generator (the actual product) — current dashboard is a placeholder.
-- **P2**
-  - Team workspaces, role-based permissions.
-  - Versioning / A/B testing UI.
-  - Analytics page.
+- **P0**: ship Stripe checkout (replace `/api/me/subscription` toggle).
+- **P0**: hook a real email provider (Resend) — replace logger.info verify/reset links with delivered emails.
+- **P1**: actual prompt-generation UI (multi-model rewriter) inside `/dashboard`.
+- **P1**: prompt library variables/inputs UX (today users copy templates with `{{placeholders}}`).
+- **P2**: team workspaces, share-by-link, public prompt gallery.
+- **P2**: A/B testing + versioning UI per prompt.
 
 ## Test credentials
-- See `/app/memory/test_credentials.md`.
+See `/app/memory/test_credentials.md`.

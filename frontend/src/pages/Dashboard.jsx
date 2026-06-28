@@ -77,10 +77,14 @@ export default function Dashboard() {
                 }}
               />
             </div>
-            <div className="mt-3 flex items-center justify-between text-xs text-[#94A3B8]">
-              <span>Period started {fmtDate(usage?.period_start)}</span>
-              <span>Resets {fmtDate(usage?.period_end)}</span>
-            </div>
+            {limit != null ? (
+              <div className="mt-3 flex items-center justify-between text-xs text-[#94A3B8]">
+                <span>Period started {fmtDate(usage?.period_start)}</span>
+                <span>Resets {fmtDate(usage?.period_end)}</span>
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-cyan">No monthly limit on Pro.</div>
+            )}
           </div>
 
           <div className={`rounded-2xl p-6 ${user.subscription === "pro" ? "glass-strong glow-cyan border-cyan" : "glass"}`} data-testid="plan-card">
@@ -104,7 +108,7 @@ export default function Dashboard() {
 
         {/* Quick links */}
         <div className="mt-8 grid gap-5 sm:grid-cols-3">
-          <QuickCard to="/marketplace" icon={Sparkles} title="Browse marketplace" desc="29 hand-tuned promptlets across 10 categories." testid="quick-marketplace" />
+          <QuickCard to="/marketplace" icon={Sparkles} title="Browse marketplace" desc="27 hand-tuned promptlets across 10 categories." testid="quick-marketplace" />
           <QuickCard to="/favorites" icon={Heart} title="Your favorites" desc={`${favorites.length} saved promptlet${favorites.length === 1 ? "" : "s"}.`} testid="quick-favorites" />
           <QuickCard to="/history" icon={History} title="Recent activity" desc={`${history.length} prompt${history.length === 1 ? "" : "s"} this period.`} testid="quick-history" />
         </div>

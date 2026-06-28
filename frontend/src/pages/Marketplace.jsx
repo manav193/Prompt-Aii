@@ -146,7 +146,7 @@ export default function Marketplace() {
         {user?.subscription !== "pro" && (
           <div className="mt-12 glass-strong rounded-2xl p-7 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 glow-cyan">
             <div>
-              <h3 className="font-display text-xl tracking-tight">Unlock 26+ Pro promptlets.</h3>
+              <h3 className="font-display text-xl tracking-tight">Unlock 24+ Pro promptlets.</h3>
               <p className="text-[#94A3B8] text-sm mt-1">Coding, Marketing, Writing, Video, AI Agents — and unlimited monthly prompts.</p>
             </div>
             <Link to="/dashboard" onClick={(e) => { e.preventDefault(); upgrade(); }} className="btn-primary rounded-full px-5 py-3 text-sm font-semibold inline-flex items-center gap-2" data-testid="marketplace-cta-upgrade">
