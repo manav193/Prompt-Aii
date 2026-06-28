@@ -1,5 +1,5 @@
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { LayoutGrid, Wand2, Store, History, Heart, CreditCard, Settings, LogOut, Sparkles, ArrowUpRight, AlertTriangle } from "lucide-react";
+import { LayoutGrid, Wand2, Store, BookOpen, Repeat, History, Heart, CreditCard, Settings, LogOut, Sparkles, ArrowUpRight, AlertTriangle, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -9,6 +9,8 @@ const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGrid, testid: "side-dashboard" },
   { to: "/generate", label: "Generate", icon: Wand2, testid: "side-generate" },
   { to: "/marketplace", label: "Promptlets", icon: Store, testid: "side-marketplace" },
+  { to: "/collections", label: "Collections", icon: BookOpen, testid: "side-collections" },
+  { to: "/convert", label: "Convert", icon: Repeat, testid: "side-convert" },
   { to: "/history", label: "History", icon: History, testid: "side-history" },
   { to: "/saved", label: "Saved", icon: Heart, testid: "side-saved" },
   { to: "/billing", label: "Billing", icon: CreditCard, testid: "side-billing" },
@@ -77,6 +79,20 @@ export default function DashboardLayout({ children }) {
                 <span>{n.label}</span>
               </NavLink>
             ))}
+            {user.role === "admin" && (
+              <NavLink
+                to="/admin"
+                data-testid="side-admin"
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors mt-3 border-t border-white/5 pt-4 ${
+                    isActive ? "text-[#00E5FF]" : "text-[#94A3B8] hover:text-white"
+                  }`
+                }
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span>Admin</span>
+              </NavLink>
+            )}
           </nav>
 
           <div className="mt-6 glass-strong rounded-xl p-4">

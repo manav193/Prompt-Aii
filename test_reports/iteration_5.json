@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 5 — Promptlets v2 / Collections / Convert / Community / Admin. Rewrote /app/backend/tests/backend_test.py for the expanded surface (28 tests, all pass in ~10s). Backend coverage: GET /promptlets filters (category/plan/model/difficulty/max_credits/q) + 4 sort modes, /promptlets/{slug}/details shape (promptlet+my_rating+reviews+related+versions, related ≤5 and excludes self, versions ≥1), rate upsert (no double-count) + /reviews with user_name, /use credits_cost=2 for Photo + 402 when low + downloads/views increments, community follow idempotent + unfollow + list, /community/trending returns 12 sorted by score, /collections returns 12 with count>0 each, /collections/best-midjourney-prompts items all carry 'Midjourney', /convert 402 before LLM when balance<3 + happy-path returns prompt and decrements 3, admin gating (403 plain user, 200 admin) on analytics/promptlets/users/categories/collections, /admin/analytics shape (all 10 totals + top_promptlets + top_categories + recent_users), admin promptlet CRUD + slug collision 400 + feature toggle + delete-then-404, admin user PATCH subscription reflected on /auth/me, admin categories + collections upsert/delete, auth guards 401 on details/convert/admin. Frontend smoke-run against the preview URL covered: auth regression (4 gated routes -> /signin), admin login, sidebar order = [dashboard, generate, marketplace, collections, convert, history, saved, billing, settings, admin] (all 10 testids in correct order), Marketplace 27 cards each carrying credits pill/stars/views/downloads/popularity + 4 actions (copy-/favorite-/share-/open-<slug>), advanced search reveals filter-{model,difficulty,max-credits} + 4 sort chips, click card body navigates to /promptlets/<slug>, PromptDetail renders Prompt / How to use / Expected output / Compatible / Ratings / Version / Related / Follow plus a rating input, Collections page lists 12 collections (correct slugs incl. best-midjourney-prompts/coding/marketing/photography/students/freelancers), collection detail shows hero + 22 items for ChatGPT collection, Convert page exposes convert-source/target/prompt/submit/output/output-text/balance (convert-copy & convert-export are conditionally rendered only AFTER first successful conversion), Admin page tabs (analytics/promptlets/users/categories/collections) all reachable, Dashboard regression cards (balance/next-credit/credits-used/plan/monthly/total) all render. No critical defects found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: the review-request lists card action testids as 'card-copy/card-save/card-share/card-open' but the live cards expose them as 'copy-<slug>/favorite-<slug>/share-<slug>/open-<slug>'. Functionality is intact; only the naming convention differs from the doc. Pick one and align so downstream regressions don't go looking for non-existent ids.",
+    "Optional: the review-request mentions a 'convert-input' testid; the live Convert page uses 'convert-prompt' (with 'convert-prompt-field' for the wrapper). Align doc or code.",
+    "convert-copy / convert-export buttons live inside the output panel and are conditionally rendered only when a converted prompt is present — that's fine, but worth documenting so tests don't look for them on first load.",
+    "Carry forward iteration-4 review points: server.py is now ~1650 lines (start splitting into auth/promptlets/admin/community/convert routers); /convert and /generate/optimize still charge credits BEFORE the LLM call — wrap in try/except and refund on 502."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from ~1000 to ~1650 lines. Routers should be split: auth, credits, promptlets, generate, convert, community, admin.",
+    "consume_credits/maybe_refill_credits still mutate a stale `user` dict fetched up the dependency tree. Convert + Optimize + Use all run sequential reads then writes — vulnerable to races on parallel requests by the same user. Use atomic findOneAndUpdate with conditional balance.",
+    "/api/convert charges credits AFTER the LLM call (good — fixes the iteration-4 flag for this endpoint), but /api/generate/optimize and /api/promptlets/{id}/use still charge BEFORE — failure modes diverge between endpoints.",
+    "Admin promptlet PATCH bumps `version` by +1 every call regardless of whether anything actually changed — that means even a no-op call increments version. Consider only bumping when the body produces a real diff.",
+    "Trending score formula is hand-rolled inline in two places (/community/trending and /promptlets?sort=trending). Extract into a helper to keep parity.",
+    "Detail endpoint increments `views` on every fetch with no rate-limit or de-dup; a single user reloading the page inflates the counter. Consider a TTL guard or move increments to a separate /viewed event."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (rewritten for iteration 5 surface)",
+    "/app/test_reports/iteration_5.json (new)"
+  ],
+  "success_rate": {
+    "backend": "28/28 (100%)",
+    "frontend": "All requested flows verified — sidebar order, marketplace card content + 4 actions + advanced search filters + 4 sort chips, card-click navigation to detail, full detail page (8 sections + rating input), 12 collections + detail (22 items for ChatGPT collection), Convert page controls + cost-display, Admin 5 tabs, Dashboard regression, and 4 auth-guard redirects."
+  },
+  "test_credentials": "admin@promptai.app / Admin@PromptAI2025 (admin / currently free plan as left by previous run — flip to pro via /api/me/subscription if you need to bypass credit gating).",
+  "seed_data_creation": "Numerous test_<hex>@example.com free users created during pytest run (mongo poked their credits_balance to 0/1/2 to exercise 402 + refill paths). One admin-created promptlet (slug = test-plet-<6hex>) is created and deleted within the same test. One test category + collection (TEST_Cat_<hex> / test-coll-<hex>) created+deleted in the admin CRUD suite. No persistent test pollution.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend pytest harness at /app/backend/tests/backend_test.py runs in ~10s under pytest-xdist via `set -a && source backend/.env && set +a` (MONGO_URL/DB_NAME). It covers iteration-5: promptlet filters/sort/details/rate/use, community follows/trending, collections list+detail, /convert happy + 402-before-LLM, full admin CRUD + gating. The iteration-4 credit-system suite is NOT in this file (intentionally — main agent confirmed those endpoints unchanged), so if iteration-6 alters credits, restore those tests. Frontend testid map (verified): side-{dashboard,generate,marketplace,collections,convert,history,saved,billing,settings,admin}, promptlet-card-<slug>, card-credits-<slug>, card-models-<slug>, card-popularity-<slug>, copy-<slug>, favorite-<slug>, share-<slug>, open-<slug>, badge-{free,pro}-<slug>, marketplace-toggle-advanced, filter-{model,difficulty,max-credits,sort-trending,sort-popular,sort-newest,sort-quality}, collection-<slug>, collections-grid, collection-grid, collection-detail, collection-back, convert-{source,target,prompt,prompt-field,submit,output,output-text,balance,swap,copy,export,form} (copy/export only rendered after successful convert), admin-tab-{analytics,promptlets,users,categories,collections}. Convert endpoint takes ~4-6s via Claude Sonnet 4.6 (Emergent LLM key).",
+  "rca of the issue": "No defects identified this iteration."
+}
