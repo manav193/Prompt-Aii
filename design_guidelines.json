@@ -1,0 +1,113 @@
+{
+  "project_name": "PromptAI",
+  "app_type": "hybrid_fullstack",
+  "tech_stack": {
+    "framework": "React JS",
+    "styling": "Tailwind CSS",
+    "components": "shadcn/ui",
+    "animations": "framer-motion"
+  },
+  "theme": {
+    "mode": "dark",
+    "archetype": "Hybrid 4 & 5 (Swiss Clarity & Premium Luxury)",
+    "aesthetic": "Futuristic, Premium, Apple + Linear + Vercel vibe. Strict avoidance of common purple AI theme. No centered Inter-on-white."
+  },
+  "colors": {
+    "css_variables": {
+      "--bg-primary": "#050816",
+      "--bg-surface": "#0F172A",
+      "--accent-cyan": "#00E5FF",
+      "--accent-blue": "#3B82F6",
+      "--accent-emerald": "#10B981",
+      "--text-primary": "#FFFFFF",
+      "--text-secondary": "#94A3B8",
+      "--border-subtle": "rgba(255, 255, 255, 0.08)"
+    },
+    "tailwind_classes": {
+      "background": "bg-[#050816]",
+      "surface": "bg-[#0F172A]",
+      "text_primary": "text-white",
+      "text_secondary": "text-[#94A3B8]"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Space Grotesk', sans-serif",
+      "body": "'Manrope', sans-serif",
+      "banned": ["Inter", "Roboto"]
+    },
+    "styles": {
+      "h1": "text-5xl md:text-7xl font-bold tracking-tighter leading-tight",
+      "h2": "text-3xl md:text-5xl font-semibold tracking-tight",
+      "body": "text-base md:text-lg leading-relaxed font-medium"
+    }
+  },
+  "design_system": {
+    "glassmorphism": {
+      "surface": "backdrop-blur-xl bg-[#0F172A]/60 border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)]",
+      "hover": "hover:bg-[#0F172A]/80 hover:border-[#00E5FF]/30 transition-all duration-300"
+    },
+    "gradients": {
+      "text_cyan_blue": "bg-clip-text text-transparent bg-gradient-to-r from-[#00E5FF] to-[#3B82F6]",
+      "background_glow": "radial-gradient(circle at top center, rgba(0,229,255,0.15) 0%, transparent 50%)"
+    },
+    "spacing": "Use p-8 to p-12 for internal card padding to ensure premium feel. Use gap-8 to gap-12 in bento grids.",
+    "borders": "1px solid rgba(255,255,255,0.08) for structure. Avoid heavy shadows; prefer glow or 1px tracing."
+  },
+  "animations": {
+    "entrance": "Staggered fade-up (y: 20 -> 0, opacity: 0 -> 1, easeOut, 0.5s).",
+    "hover_state": "Cards lift up (-translate-y-1) with increased border brightness.",
+    "micro_interactions": "Buttons scale down to 0.98 on active state."
+  },
+  "components_guidance": {
+    "hero": "H1 with gradient text. Dual CTA (Get Started Primary cyan, Watch demo secondary glass). Background must feature a subtle cyan/blue glowing orb. No heavy overlays.",
+    "trusted_by": "Logo strip with 10+ logos. Grayscale, opacity-40, infinite seamless marquee.",
+    "features": "4-6 bento grid cards. Each card uses glassmorphism and contains a cyan Lucide icon.",
+    "how_it_works": "3-step process, linear flow, using connecting lines or numbered glowing badges.",
+    "models_supported": "Dense grid of tools (ChatGPT, Claude, Gemini, Midjourney, etc). Cards have a subtle inner glow.",
+    "pricing": "3 tiers (Free, Pro, Enterprise). Pro tier has a 1px solid #00E5FF border and a subtle cyan drop-shadow glow.",
+    "testimonials": "Carousel or grid of user reviews. Uses avatar images. Text should feel personal and authentic.",
+    "faq": "Uses shadcn Accordion. Minimalist styling, border-b only.",
+    "contact": "Form taking Name, Email, Message. Focus rings must be #00E5FF.",
+    "footer": "Multi-column links, muted text, newsletter email capture input.",
+    "auth_pages": "Sign Up / Sign In. Center glass card on dark cyan wavy abstract background. Include Google Auth button.",
+    "dashboard": "Minimal authenticated state. Sidebar nav. Welcome back user text. A simple bento grid for placeholder stats."
+  },
+  "assets": {
+    "images": [
+      {
+        "category": "hero_background",
+        "url": "https://images.unsplash.com/photo-1579567761406-4684ee0c75b6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwyfHxnbG93aW5nJTIwYmx1ZSUyMHRlY2hub2xvZ3klMjBhYnN0cmFjdHxlbnwwfHx8fDE3ODI2MTk2NDJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract blue and white art for deep space hero feel"
+      },
+      {
+        "category": "section_background",
+        "url": "https://images.unsplash.com/photo-1758073519996-6d3c63b4922c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHw0fHxnbG93aW5nJTIwYmx1ZSUyMHRlY2hub2xvZ3klMjBhYnN0cmFjdHxlbnwwfHx8fDE3ODI2MTk2NDJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract blue glowing dots for AI models section"
+      },
+      {
+        "category": "auth_background",
+        "url": "https://images.unsplash.com/photo-1655841439659-0afc60676b70?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwyfHxkYXJrJTIwYWJzdHJhY3QlMjBjeWFuJTIwZnV0dXJpc3RpYyUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzgyNjE5NjQyfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Dark teal wavy shapes for auth page backdrop"
+      },
+      {
+        "category": "avatar_1",
+        "url": "https://images.pexels.com/photos/20157010/pexels-photo-20157010.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Professional user avatar for testimonials"
+      },
+      {
+        "category": "avatar_2",
+        "url": "https://images.pexels.com/photos/6146051/pexels-photo-6146051.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Professional user avatar for testimonials"
+      },
+      {
+        "category": "logo_placeholder",
+        "url": "https://images.unsplash.com/photo-1611162618828-bc409f073cbf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0aWMlMjB0ZWNoJTIwY29tcGFueSUyMGxvZ28lMjBpc29sYXRlZHxlbnwwfHx8fDE3ODI2MTk2NDJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Minimal white logo for trusted by strip"
+      }
+    ]
+  },
+  "testing": {
+    "requirements": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case."
+  }
+}
