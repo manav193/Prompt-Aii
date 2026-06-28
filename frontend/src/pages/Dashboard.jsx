@@ -1,45 +1,27 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Wand2, Heart, History, Crown, Sparkles } from "lucide-react";
+import { ArrowRight, Wand2, Heart, History as HistoryIcon, Crown, Sparkles, Coins, CalendarClock, Activity, Tag } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 
 export default function Dashboard() {
-  const { user, fetchMe } = useAuth();
-  const [usage, setUsage] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [favorites, setFavorites] = useState([]);
+  const { user } = useAuth();
+  const [data, setData] = useState(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [u, h, f] = await Promise.all([
-          api.get("/me/usage"),
-          api.get("/me/history?limit=8"),
-          api.get("/me/favorites"),
-        ]);
-        setUsage(u.data);
-        setHistory(h.data.items || []);
-        setFavorites(f.data.items || []);
-      } catch (e) { /* ignore */ }
-    })();
+    api.get("/me/dashboard").then(({ data }) => setData(data)).catch(() => null);
   }, []);
-
-  const upgrade = async () => {
-    await api.post("/me/subscription", { plan: "pro" });
-    await fetchMe();
-    const u = await api.get("/me/usage");
-    setUsage(u.data);
-  };
 
   if (!user) return null;
   const firstName = (user.name || user.email.split("@")[0]).split(" ")[0];
 
-  const used = usage?.used ?? 0;
-  const limit = usage?.limit;
-  const remaining = limit == null ? "∞" : Math.max(0, limit - used);
-  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 8;
+  const c = data?.credits;
+  const isPro = c?.plan === "pro";
+  const balance = c?.balance;
+  const used = c?.used ?? 0;
+  const refill = c?.refill_amount ?? 100;
+  const pct = isPro ? 8 : Math.min(100, Math.round(((refill - (balance ?? 0)) / refill) * 100));
 
   return (
     <DashboardLayout>
@@ -50,120 +32,149 @@ export default function Dashboard() {
             Hello, {firstName}.
           </h1>
           <p className="mt-2 text-[#94A3B8]">
-            Your prompt workspace — {user.subscription === "pro" ? "unlimited prompts unlocked." : `${remaining} of ${limit} prompts left this month.`}
+            {isPro
+              ? "You're on Pro — unlimited credits, full library."
+              : balance > 0
+                ? `${balance} credits remaining. ${used} used so far.`
+                : c?.next_credit_date
+                  ? `0 credits. Next refill ${fmtDate(c.next_credit_date)}.`
+                  : "Your free credits will refill 30 days after you hit zero."}
           </p>
         </header>
 
-        {/* Usage + Plan */}
+        {/* Top stat row */}
         <div className="grid gap-5 md:grid-cols-3">
-          <div className="md:col-span-2 glass rounded-2xl p-6" data-testid="usage-card">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[11px] uppercase tracking-wider text-[#94A3B8]">Usage this period</p>
-                <div className="mt-2 flex items-baseline gap-2">
-                  <span className="font-display text-4xl tracking-tighter" data-testid="usage-used">{used}</span>
-                  <span className="text-[#94A3B8] text-sm">/ {limit ?? "unlimited"} prompts</span>
-                </div>
+          <StatCard
+            icon={Coins}
+            label="Remaining Credits"
+            value={isPro ? "∞" : (balance ?? 0)}
+            hint={isPro ? "Unlimited on Pro" : `${refill}-credit refill cycle`}
+            testid="card-balance"
+          >
+            {!isPro && (
+              <div className="mt-4 h-1.5 w-full rounded-full bg-white/[0.06] overflow-hidden">
+                <div className="h-full" style={{ width: `${pct}%`, background: "linear-gradient(90deg, #00E5FF, #3B82F6)", transition: "width .6s ease" }} />
               </div>
-              <Wand2 className="h-5 w-5 text-cyan" />
-            </div>
-            <div className="mt-5 h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
-              <div
-                className="h-full"
-                style={{
-                  width: `${pct}%`,
-                  background: "linear-gradient(90deg, #00E5FF, #3B82F6)",
-                  transition: "width .6s ease",
-                }}
-              />
-            </div>
-            {limit != null ? (
-              <div className="mt-3 flex items-center justify-between text-xs text-[#94A3B8]">
-                <span>Period started {fmtDate(usage?.period_start)}</span>
-                <span>Resets {fmtDate(usage?.period_end)}</span>
-              </div>
-            ) : (
-              <div className="mt-3 text-xs text-cyan">No monthly limit on Pro.</div>
             )}
-          </div>
+          </StatCard>
+          <StatCard
+            icon={CalendarClock}
+            label="Next Credit Date"
+            value={isPro ? "Always available" : c?.next_credit_date ? fmtDate(c.next_credit_date) : "—"}
+            hint={isPro ? "Pro members never wait." : c?.next_credit_date ? `${daysUntil(c.next_credit_date)} days away` : "Starts when you hit 0"}
+            testid="card-next-credit"
+          />
+          <StatCard
+            icon={Activity}
+            label="Credits Used"
+            value={used}
+            hint={`Total prompts: ${data?.total_used ?? 0}`}
+            testid="card-credits-used"
+          />
+        </div>
 
-          <div className={`rounded-2xl p-6 ${user.subscription === "pro" ? "glass-strong glow-cyan border-cyan" : "glass"}`} data-testid="plan-card">
+        {/* Second row */}
+        <div className="grid gap-5 md:grid-cols-3 mt-5">
+          <div className={`rounded-2xl p-6 ${isPro ? "glass-strong border-cyan glow-cyan" : "glass"}`} data-testid="card-plan">
             <div className="flex items-center justify-between">
-              <p className="text-[11px] uppercase tracking-wider text-[#94A3B8]">Current plan</p>
-              <Crown className={`h-5 w-5 ${user.subscription === "pro" ? "text-cyan" : "text-[#94A3B8]"}`} />
+              <p className="text-[11px] uppercase tracking-wider text-[#94A3B8]">Current Plan</p>
+              <Crown className={`h-5 w-5 ${isPro ? "text-cyan" : "text-[#94A3B8]"}`} />
             </div>
             <div className="mt-2 font-display text-3xl tracking-tight capitalize" data-testid="plan-name">{user.subscription}</div>
             <p className="text-sm text-[#94A3B8] mt-1">
-              {user.subscription === "pro" ? "Unlimited prompts. Full library." : "100 prompts/mo · Photo Promptlets only."}
+              {isPro ? "Unlimited credits. Full library." : "100 credits per cycle. Photo Promptlets unlocked."}
             </p>
-            {user.subscription !== "pro" ? (
-              <button onClick={upgrade} className="mt-5 w-full btn-primary rounded-full px-4 py-2.5 text-xs font-semibold inline-flex items-center justify-center gap-2" data-testid="upgrade-pro">
-                Upgrade to Pro <ArrowRight className="h-3.5 w-3.5" />
-              </button>
+            <Link to="/billing" className="mt-5 w-full inline-flex justify-center btn-ghost-glass rounded-full px-4 py-2 text-xs" data-testid="dashboard-billing-link">
+              Manage billing
+            </Link>
+          </div>
+
+          <StatCard icon={HistoryIcon} label="Monthly Usage" value={data?.monthly_used ?? 0} hint="Prompts in the last 30 days" testid="card-monthly" />
+          <StatCard icon={Sparkles} label="Total Promptlets Used" value={data?.total_used ?? 0} hint={`${data?.favorites_count ?? 0} favorites · ${data?.saved_prompts_count ?? 0} saved`} testid="card-total" />
+        </div>
+
+        {/* Quick actions */}
+        <div className="mt-8 grid gap-5 sm:grid-cols-3">
+          <QuickCard to="/generate" icon={Wand2} title="Generate a prompt" desc="AI-optimized prompts in any model." testid="quick-generate" />
+          <QuickCard to="/marketplace" icon={Sparkles} title="Browse Promptlets" desc="27 curated promptlets, 10 categories." testid="quick-marketplace" />
+          <QuickCard to="/saved" icon={Heart} title="Your saved" desc={`${data?.saved_prompts_count ?? 0} generations · ${data?.favorites_count ?? 0} marketplace favs.`} testid="quick-saved" />
+        </div>
+
+        {/* Recent + Favourite categories */}
+        <div className="mt-10 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-xl tracking-tight">Recent prompts</h2>
+              <Link to="/history" className="text-xs text-[#94A3B8] hover:text-white inline-flex items-center gap-1" data-testid="see-all-history">
+                See all <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+            {(data?.recent_history?.length ?? 0) === 0 ? (
+              <Empty msg="No prompts yet. Try the Generator or Marketplace." />
             ) : (
-              <p className="mt-5 text-xs text-cyan">You're on the team plan that ships.</p>
+              <ul className="glass rounded-2xl divide-y divide-white/5" data-testid="recent-list">
+                {data.recent_history.map((h) => (
+                  <li key={h.history_id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm truncate">{h.promptlet_name || "Custom prompt"}</p>
+                      <p className="text-[12px] text-[#94A3B8]">{h.category}{h.model ? ` · ${h.model}` : ""}{h.kind === "optimize" ? " · Generator" : ""}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[11px] text-cyan whitespace-nowrap">−{h.cost ?? 1} cr</span>
+                      <div className="text-[11px] text-[#94A3B8] whitespace-nowrap">{fmtDate(h.created_at, true)}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div>
+            <h2 className="font-display text-xl tracking-tight mb-4 inline-flex items-center gap-2">
+              <Tag className="h-4 w-4 text-cyan" /> Favourite Categories
+            </h2>
+            {(data?.favorite_categories?.length ?? 0) === 0 ? (
+              <Empty msg="Use a few prompts and we'll show your top categories here." />
+            ) : (
+              <ul className="glass rounded-2xl p-4 space-y-3" data-testid="fav-categories">
+                {data.favorite_categories.map((c, i) => {
+                  const max = data.favorite_categories[0]?.count || 1;
+                  const w = Math.max(8, Math.round((c.count / max) * 100));
+                  return (
+                    <li key={c.category} className="flex items-center gap-3">
+                      <span className="text-[11px] font-mono-pa text-[#94A3B8] w-6">#{i + 1}</span>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-white">{c.category}</span>
+                          <span className="text-[#94A3B8] text-xs">{c.count} prompt{c.count === 1 ? "" : "s"}</span>
+                        </div>
+                        <div className="mt-1.5 h-1 rounded-full bg-white/[0.06] overflow-hidden">
+                          <div className="h-full" style={{ width: `${w}%`, background: "linear-gradient(90deg, #00E5FF, #3B82F6)" }} />
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
         </div>
-
-        {/* Quick links */}
-        <div className="mt-8 grid gap-5 sm:grid-cols-3">
-          <QuickCard to="/marketplace" icon={Sparkles} title="Browse marketplace" desc="27 hand-tuned promptlets across 10 categories." testid="quick-marketplace" />
-          <QuickCard to="/favorites" icon={Heart} title="Your favorites" desc={`${favorites.length} saved promptlet${favorites.length === 1 ? "" : "s"}.`} testid="quick-favorites" />
-          <QuickCard to="/history" icon={History} title="Recent activity" desc={`${history.length} prompt${history.length === 1 ? "" : "s"} this period.`} testid="quick-history" />
-        </div>
-
-        {/* Recent prompts */}
-        <div className="mt-10">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-xl tracking-tight">Recent prompts</h2>
-            <Link to="/history" className="text-xs text-[#94A3B8] hover:text-white inline-flex items-center gap-1" data-testid="see-all-history">
-              See all <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {history.length === 0 ? (
-            <Empty msg="No prompts yet. Try one from the marketplace." />
-          ) : (
-            <ul className="glass rounded-2xl divide-y divide-white/5" data-testid="recent-list">
-              {history.map((h) => (
-                <li key={h.history_id} className="px-5 py-3.5 flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm truncate">{h.promptlet_name}</p>
-                    <p className="text-[12px] text-[#94A3B8]">{h.category}</p>
-                  </div>
-                  <span className="text-[11px] text-[#94A3B8] whitespace-nowrap">{fmtDate(h.created_at, true)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Saved promptlets preview */}
-        <div className="mt-10">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-xl tracking-tight">Saved Promptlets</h2>
-            <Link to="/favorites" className="text-xs text-[#94A3B8] hover:text-white inline-flex items-center gap-1" data-testid="see-all-favs">
-              See all <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {favorites.length === 0 ? (
-            <Empty msg="No favorites yet. Tap the heart on any promptlet to save it." />
-          ) : (
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="favorites-preview">
-              {favorites.slice(0, 6).map((f) => (
-                <li key={f.promptlet_id} className="glass rounded-xl p-4 flex items-start gap-3">
-                  <span className="h-9 w-9 shrink-0 rounded-lg" style={{ background: `linear-gradient(135deg, ${f.gradient?.[0] || "#0EA5E9"}, ${f.gradient?.[1] || "#3B82F6"})` }} />
-                  <div className="min-w-0">
-                    <p className="text-sm truncate">{f.name}</p>
-                    <p className="text-[12px] text-[#94A3B8]">{f.category}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, hint, testid, children }) {
+  return (
+    <div className="glass rounded-2xl p-6" data-testid={testid}>
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] uppercase tracking-wider text-[#94A3B8]">{label}</p>
+        <Icon className="h-5 w-5 text-cyan" />
+      </div>
+      <div className="mt-2 font-display text-3xl tracking-tighter" data-testid={`${testid}-value`}>{value}</div>
+      {hint && <div className="text-xs text-[#94A3B8] mt-1">{hint}</div>}
+      {children}
+    </div>
   );
 }
 
@@ -195,4 +206,11 @@ function fmtDate(iso, withTime = false) {
       : { month: "short", day: "numeric", year: "numeric" };
     return d.toLocaleDateString(undefined, opts);
   } catch { return "—"; }
+}
+
+function daysUntil(iso) {
+  try {
+    const ms = new Date(iso).getTime() - Date.now();
+    return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  } catch { return 0; }
 }

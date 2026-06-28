@@ -132,8 +132,16 @@ def public_user(user: dict) -> dict:
     }
 
 
-FREE_LIMIT = 100
-PLAN_LIMITS = {"free": FREE_LIMIT, "pro": None}  # None == unlimited
+# ---------------------------------------------------------------------------
+# Credit system
+# ---------------------------------------------------------------------------
+FREE_REFILL_AMOUNT = 100
+RENEWAL_DAYS = 30
+
+# Cost per action (in credits). Pro users are exempt.
+PROMPT_USE_COST = 1     # using/copying a marketplace promptlet
+OPTIMIZE_COST = 3       # AI-powered optimizer
+SAVE_COST = 0           # saving / favoriting is free
 
 
 def now_iso() -> str:
@@ -152,37 +160,66 @@ def parse_iso(value):
         return None
 
 
-async def ensure_usage_period(user: dict) -> dict:
-    """Reset prompts_used if the 30-day window has elapsed."""
-    start = parse_iso(user.get("usage_period_start"))
-    now = datetime.now(timezone.utc)
-    if not start or (now - start) >= timedelta(days=30):
-        new_start = now.isoformat()
+async def maybe_refill_credits(user: dict) -> dict:
+    """If balance is 0 and the personal 30-day countdown has expired, refill to 100."""
+    if user.get("subscription") == "pro":
+        return user
+    balance = int(user.get("credits_balance", 0))
+    if balance > 0:
+        return user
+    ncd = parse_iso(user.get("next_credit_date"))
+    if ncd and datetime.now(timezone.utc) >= ncd:
         await db.users.update_one(
             {"user_id": user["user_id"]},
-            {"$set": {"prompts_used": 0, "usage_period_start": new_start}},
+            {"$set": {"credits_balance": FREE_REFILL_AMOUNT, "next_credit_date": None}},
         )
-        user["prompts_used"] = 0
-        user["usage_period_start"] = new_start
+        user["credits_balance"] = FREE_REFILL_AMOUNT
+        user["next_credit_date"] = None
     return user
 
 
-def usage_summary(user: dict) -> dict:
+async def consume_credits(user: dict, amount: int) -> dict:
+    """Decrement credits and (when reaching zero) start the 30-day countdown."""
+    if amount <= 0 or user.get("subscription") == "pro":
+        return user
+    user = await maybe_refill_credits(user)
+    balance = int(user.get("credits_balance", 0))
+    if balance < amount:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Not enough credits. You need {amount} but have {balance}. "
+                "Upgrade to Pro for unlimited credits."
+            ),
+        )
+    new_balance = balance - amount
+    update: dict = {
+        "credits_balance": new_balance,
+        "credits_used": int(user.get("credits_used", 0)) + amount,
+    }
+    if new_balance == 0 and not user.get("next_credit_date"):
+        update["next_credit_date"] = (datetime.now(timezone.utc) + timedelta(days=RENEWAL_DAYS)).isoformat()
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": update})
+    user.update(update)
+    return user
+
+
+def credit_summary(user: dict) -> dict:
     plan = user.get("subscription", "free")
-    limit = PLAN_LIMITS.get(plan)
-    used = int(user.get("prompts_used", 0))
-    start = parse_iso(user.get("usage_period_start"))
-    if start:
-        period_end = start + timedelta(days=30)
-    else:
-        period_end = None
+    if plan == "pro":
+        return {
+            "plan": "pro",
+            "balance": None,        # unlimited
+            "used": int(user.get("credits_used", 0)),
+            "next_credit_date": None,
+            "refill_amount": None,
+        }
     return {
-        "plan": plan,
-        "limit": limit,
-        "used": used,
-        "remaining": (limit - used) if limit is not None else None,
-        "period_start": user.get("usage_period_start"),
-        "period_end": period_end.isoformat() if period_end else None,
+        "plan": "free",
+        "balance": int(user.get("credits_balance", 0)),
+        "used": int(user.get("credits_used", 0)),
+        "next_credit_date": user.get("next_credit_date"),
+        "refill_amount": FREE_REFILL_AMOUNT,
     }
 
 
@@ -268,6 +305,21 @@ class UpgradeBody(BaseModel):
     plan: str = Field(pattern="^(free|pro)$")
 
 
+class OptimizeBody(BaseModel):
+    idea: str = Field(min_length=3, max_length=4000)
+    model: str = Field(min_length=1, max_length=40)
+    category: str = Field(min_length=1, max_length=40)
+
+
+class SavePromptBody(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    prompt: str = Field(min_length=1, max_length=8000)
+    model: str = Field(min_length=1, max_length=40)
+    category: str = Field(min_length=1, max_length=40)
+    idea: Optional[str] = None
+
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -294,8 +346,9 @@ async def register(body: RegisterBody, response: Response):
         "role": "user",
         "picture": None,
         "subscription": "free",
-        "prompts_used": 0,
-        "usage_period_start": now_iso(),
+        "credits_balance": FREE_REFILL_AMOUNT,
+        "credits_used": 0,
+        "next_credit_date": None,
         "email_verified": False,
         "email_verification_token": verification_token,
         "created_at": now_iso(),
@@ -459,8 +512,9 @@ async def google_session(body: GoogleSessionBody, response: Response):
             "role": "user",
             "password_hash": None,
             "subscription": "free",
-            "prompts_used": 0,
-            "usage_period_start": now_iso(),
+            "credits_balance": FREE_REFILL_AMOUNT,
+            "credits_used": 0,
+            "next_credit_date": None,
             "email_verified": True,  # Google verifies email for us
             "created_at": now_iso(),
         }
@@ -625,34 +679,27 @@ async def use_promptlet(promptlet_id: str, user: dict = Depends(get_current_user
     if not can_access_promptlet(user, p):
         raise HTTPException(status_code=403, detail="Upgrade to Pro to use this promptlet")
 
-    user = await ensure_usage_period(user)
-    summary = usage_summary(user)
-    if summary["limit"] is not None and summary["used"] >= summary["limit"]:
-        raise HTTPException(
-            status_code=402,
-            detail=f"You've hit your {summary['limit']} prompt limit for this month. Upgrade to Pro for unlimited prompts.",
-        )
+    user = await consume_credits(user, PROMPT_USE_COST)
 
-    new_used = summary["used"] + 1
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"prompts_used": new_used}},
-    )
     history_doc = {
         "history_id": uuid.uuid4().hex,
         "user_id": user["user_id"],
+        "kind": "marketplace_use",
         "promptlet_id": promptlet_id,
         "promptlet_slug": p["slug"],
         "promptlet_name": p["name"],
         "category": p["category"],
+        "model": (p.get("models") or [None])[0],
+        "cost": PROMPT_USE_COST,
         "created_at": now_iso(),
     }
     await db.prompt_history.insert_one(history_doc)
     return {
         "ok": True,
         "prompt": p["prompt"],
-        "promptlet": serialize_promptlet(p, {**user, "prompts_used": new_used}),
-        "usage": {**summary, "used": new_used, "remaining": (summary["limit"] - new_used) if summary["limit"] is not None else None},
+        "promptlet": serialize_promptlet(p, user),
+        "credits": credit_summary(user),
+        "cost": PROMPT_USE_COST,
     }
 
 
@@ -677,8 +724,42 @@ async def toggle_favorite(promptlet_id: str, body: FavoriteBody, user: dict = De
 # ---------------------------------------------------------------------------
 @api.get("/me/usage")
 async def me_usage(user: dict = Depends(get_current_user)):
-    user = await ensure_usage_period(user)
-    return usage_summary(user)
+    user = await maybe_refill_credits(user)
+    return credit_summary(user)
+
+
+@api.get("/me/dashboard")
+async def me_dashboard(user: dict = Depends(get_current_user)):
+    user = await maybe_refill_credits(user)
+    cred = credit_summary(user)
+    # Recent history (last 8)
+    recent = await db.prompt_history.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(8)
+    # Favorites count
+    fav_count = await db.favorites.count_documents({"user_id": user["user_id"]})
+    saved_count = await db.saved_prompts.count_documents({"user_id": user["user_id"]})
+    # 30-day rolling usage (count of history docs)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    monthly = await db.prompt_history.count_documents({"user_id": user["user_id"], "created_at": {"$gte": cutoff}})
+    # Total prompts used (history rows)
+    total = await db.prompt_history.count_documents({"user_id": user["user_id"]})
+    # Favorite categories (top 3 by count in history)
+    pipeline = [
+        {"$match": {"user_id": user["user_id"]}},
+        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 5},
+    ]
+    cats = [{"category": row["_id"], "count": row["count"]} async for row in db.prompt_history.aggregate(pipeline) if row["_id"]]
+    return {
+        "credits": cred,
+        "subscription": user.get("subscription", "free"),
+        "total_used": total,
+        "monthly_used": monthly,
+        "favorite_categories": cats,
+        "saved_prompts_count": saved_count,
+        "favorites_count": fav_count,
+        "recent_history": recent,
+    }
 
 
 @api.get("/me/favorites")
@@ -717,7 +798,106 @@ async def update_subscription(body: UpgradeBody, user: dict = Depends(get_curren
         {"$set": {"subscription": body.plan}},
     )
     user["subscription"] = body.plan
-    return {"ok": True, "subscription": body.plan, "usage": usage_summary(user)}
+    return {"ok": True, "subscription": body.plan, "credits": credit_summary(user)}
+
+
+# ---------------------------------------------------------------------------
+# Prompt Generator (LLM-powered)
+# ---------------------------------------------------------------------------
+@api.post("/generate/optimize")
+async def optimize_prompt(body: OptimizeBody, user: dict = Depends(get_current_user)):
+    # Lazy import so a missing key/library doesn't break unrelated routes.
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    llm_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not llm_key:
+        raise HTTPException(status_code=500, detail="LLM key not configured")
+
+    user = await consume_credits(user, OPTIMIZE_COST)
+
+    system_message = (
+        "You are PromptAI's prompt-engineering co-pilot. Given a user's plain-English "
+        "idea, target AI model and category, produce a single, polished, production-ready "
+        "prompt that is idiomatic for that model and category.\n\n"
+        "Rules:\n"
+        "- Output ONLY the optimized prompt, no preamble, no quotes, no commentary.\n"
+        "- Use the conventions of the target model (e.g. /imagine + parameters for Midjourney, "
+        "  natural-language instructions for ChatGPT/Claude/Gemini, JSON-output framing for coding).\n"
+        "- Keep it under 220 words.\n"
+        "- Preserve all proper nouns and any concrete details from the user's idea."
+    )
+
+    user_text = (
+        f"Target model: {body.model}\n"
+        f"Category: {body.category}\n"
+        f"User idea:\n{body.idea.strip()}"
+    )
+
+    try:
+        chat = LlmChat(
+            api_key=llm_key,
+            session_id=f"optimize-{user['user_id']}-{uuid.uuid4().hex[:8]}",
+            system_message=system_message,
+        ).with_model("anthropic", "claude-sonnet-4-6")
+        result = await chat.send_message(UserMessage(text=user_text))
+    except Exception as exc:
+        logger.exception("Optimizer call failed")
+        raise HTTPException(status_code=502, detail=f"Optimizer is unavailable right now: {exc}")
+
+    optimized = (result or "").strip()
+    if not optimized:
+        raise HTTPException(status_code=502, detail="Empty response from optimizer")
+
+    history_doc = {
+        "history_id": uuid.uuid4().hex,
+        "user_id": user["user_id"],
+        "kind": "optimize",
+        "promptlet_name": (body.idea.strip().split("\n")[0][:80] or "Custom prompt"),
+        "category": body.category,
+        "model": body.model,
+        "idea": body.idea.strip(),
+        "prompt": optimized,
+        "cost": OPTIMIZE_COST,
+        "created_at": now_iso(),
+    }
+    await db.prompt_history.insert_one(history_doc)
+    return {
+        "ok": True,
+        "prompt": optimized,
+        "credits": credit_summary(user),
+        "cost": OPTIMIZE_COST,
+        "history_id": history_doc["history_id"],
+    }
+
+
+@api.post("/generate/save")
+async def save_generated(body: SavePromptBody, user: dict = Depends(get_current_user)):
+    doc = {
+        "saved_id": uuid.uuid4().hex,
+        "user_id": user["user_id"],
+        "name": body.name.strip()[:120] or "Untitled prompt",
+        "prompt": body.prompt.strip(),
+        "model": body.model,
+        "category": body.category,
+        "idea": (body.idea or "").strip(),
+        "created_at": now_iso(),
+    }
+    await db.saved_prompts.insert_one(doc)
+    return {"ok": True, "saved_id": doc["saved_id"]}
+
+
+@api.get("/me/saved-prompts")
+async def list_saved_prompts(user: dict = Depends(get_current_user)):
+    rows = await db.saved_prompts.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"items": rows}
+
+
+@api.delete("/me/saved-prompts/{saved_id}")
+async def delete_saved_prompt(saved_id: str, user: dict = Depends(get_current_user)):
+    res = await db.saved_prompts.delete_one({"saved_id": saved_id, "user_id": user["user_id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -734,8 +914,28 @@ async def on_startup():
     await db.promptlets.create_index("category")
     await db.favorites.create_index([("user_id", 1), ("promptlet_id", 1)], unique=True)
     await db.prompt_history.create_index([("user_id", 1), ("created_at", -1)])
+    await db.saved_prompts.create_index([("user_id", 1), ("created_at", -1)])
+    await db.saved_prompts.create_index("saved_id", unique=True)
+    await migrate_users_to_credits()
     await seed_admin()
     await seed_promptlets()
+
+
+async def migrate_users_to_credits():
+    """One-shot migration: backfill credit fields on any user missing them."""
+    cursor = db.users.find({"credits_balance": {"$exists": False}}, {"_id": 0, "user_id": 1})
+    async for u in cursor:
+        await db.users.update_one(
+            {"user_id": u["user_id"]},
+            {
+                "$set": {
+                    "credits_balance": FREE_REFILL_AMOUNT,
+                    "credits_used": 0,
+                    "next_credit_date": None,
+                },
+                "$unset": {"prompts_used": "", "usage_period_start": ""},
+            },
+        )
 
 
 async def seed_promptlets():
@@ -774,8 +974,9 @@ async def seed_admin():
             "role": "admin",
             "picture": None,
             "subscription": "pro",
-            "prompts_used": 0,
-            "usage_period_start": now_iso(),
+            "credits_balance": FREE_REFILL_AMOUNT,
+            "credits_used": 0,
+            "next_credit_date": None,
             "email_verified": True,
             "created_at": now_iso(),
         })

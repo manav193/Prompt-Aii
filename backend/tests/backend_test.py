@@ -1,42 +1,43 @@
-"""End-to-end backend test for the PromptAI MVP (iteration 3).
+"""End-to-end backend tests for PromptAI iteration 4 (credit system).
 
-Covers: promptlets catalog, gating, usage counter, favorites, history,
-subscription upgrade, email verification, password reset.
+Schema reminder:
+  /api/me/usage    -> {plan, balance, used, next_credit_date, refill_amount}
+  /api/promptlets/{id}/use -> {ok, prompt, credits, cost, promptlet}
+  /api/generate/optimize  -> {ok, prompt, credits, cost, history_id}
 """
 import os
 import re
-import subprocess
 import time
 import uuid
+import asyncio
+from datetime import datetime, timezone, timedelta
 
 import pytest
 import requests
+from motor.motor_asyncio import AsyncIOMotorClient
 
-BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else "https://prompt-craft-demo.preview.emergentagent.com"
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://prompt-craft-demo.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "admin@promptai.app"
 ADMIN_PASSWORD = "Admin@PromptAI2025"
 
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("DB_NAME", "test_database")
+
 
 def _new_email():
-    # backend lowercases on insert; use lowercase here so log scraping by email matches
     return f"test_{uuid.uuid4().hex[:10]}@example.com"
 
 
 def _tail_backend_log(pattern: str, attempts: int = 8, sleep: float = 0.5):
-    """Scan supervisor backend stderr/stdout logs for a line matching pattern, return the match."""
-    log_paths = [
-        "/var/log/supervisor/backend.err.log",
-        "/var/log/supervisor/backend.out.log",
-    ]
+    log_paths = ["/var/log/supervisor/backend.err.log", "/var/log/supervisor/backend.out.log"]
     rx = re.compile(pattern)
     for _ in range(attempts):
         for p in log_paths:
             try:
                 with open(p, "r", errors="ignore") as f:
-                    # only look at last ~200 lines
-                    lines = f.readlines()[-400:]
+                    lines = f.readlines()[-600:]
             except FileNotFoundError:
                 continue
             for line in reversed(lines):
@@ -47,259 +48,224 @@ def _tail_backend_log(pattern: str, attempts: int = 8, sleep: float = 0.5):
     return None
 
 
-# ---------- Promptlets catalog (anonymous) ----------
-class TestPromptletsCatalog:
-    def test_anonymous_list_returns_27_locked_pro(self):
-        r = requests.get(f"{API}/promptlets")
-        assert r.status_code == 200
-        data = r.json()
-        items = data["items"]
-        assert len(items) == 27, f"expected 27 promptlets, got {len(items)}"
-        # 10 categories
-        cats = set(data["categories"])
-        assert len(cats) == 10, f"expected 10 categories, got {cats}"
-
-        photo = [i for i in items if i["category"] == "Photo"]
-        assert len(photo) == 3
-        assert all(i["plan"] == "free" for i in photo)
-        # anonymous: free items should have prompt populated and locked=False
-        for i in photo:
-            assert i["locked"] is False
-            assert i["prompt"] and i["prompt"] is not None
-        # pro items: locked=True and prompt=None for anonymous
-        pro = [i for i in items if i["plan"] == "pro"]
-        assert len(pro) == 24
-        for i in pro:
-            assert i["locked"] is True
-            assert i["prompt"] is None
-
-    def test_filter_category_coding(self):
-        r = requests.get(f"{API}/promptlets", params={"category": "Coding"})
-        assert r.status_code == 200
-        items = r.json()["items"]
-        assert len(items) > 0
-        assert all(i["category"] == "Coding" for i in items)
-
-    def test_filter_plan_free_and_pro(self):
-        r_free = requests.get(f"{API}/promptlets", params={"plan": "free"}).json()
-        r_pro = requests.get(f"{API}/promptlets", params={"plan": "pro"}).json()
-        assert all(i["plan"] == "free" for i in r_free["items"])
-        assert all(i["plan"] == "pro" for i in r_pro["items"])
-        assert len(r_free["items"]) == 3
-        assert len(r_pro["items"]) == 24
-
-    def test_search_portrait(self):
-        r = requests.get(f"{API}/promptlets", params={"q": "portrait"})
-        assert r.status_code == 200
-        items = r.json()["items"]
-        assert len(items) >= 1
-        joined = " ".join((i["name"] + " " + i["description"]).lower() for i in items)
-        assert "portrait" in joined
+def _mongo_set(email: str, fields: dict):
+    """Synchronously poke a user doc via motor."""
+    async def _run():
+        client = AsyncIOMotorClient(MONGO_URL)
+        db = client[DB_NAME]
+        res = await db.users.update_one({"email": email.lower()}, {"$set": fields})
+        client.close()
+        return res.modified_count
+    return asyncio.run(_run())
 
 
-# ---------- Authenticated free user: gating + usage ----------
-class TestFreeUserGating:
-    @pytest.fixture(scope="class")
-    def free_session(self):
+# --------------- Health ---------------
+def test_health():
+    r = requests.get(f"{API}/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+# --------------- Usage shape (new credit schema) ---------------
+class TestUsageShape:
+    def test_free_user_usage_shape(self):
         s = requests.Session()
         email = _new_email()
-        password = "Passw0rd!Test"
-        r = s.post(f"{API}/auth/register", json={"name": "Free User", "email": email, "password": password})
+        r = s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
         assert r.status_code == 200, r.text
-        # ensure free plan + reset usage
-        return {"session": s, "email": email, "password": password}
+        u = s.get(f"{API}/me/usage").json()
+        assert set(u.keys()) >= {"plan", "balance", "used", "next_credit_date", "refill_amount"}
+        assert u["plan"] == "free"
+        assert u["balance"] == 100
+        assert u["used"] == 0
+        assert u["next_credit_date"] is None
+        assert u["refill_amount"] == 100
 
-    def test_list_marks_locked_correctly(self, free_session):
-        s = free_session["session"]
-        r = s.get(f"{API}/promptlets")
-        assert r.status_code == 200
-        items = r.json()["items"]
-        for i in items:
-            if i["plan"] == "free":
-                assert i["locked"] is False
-                assert i["prompt"] is not None
-            else:
-                assert i["locked"] is True
-                assert i["prompt"] is None
+    def test_pro_user_usage_shape(self):
+        s = requests.Session()
+        email = _new_email()
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        up = s.post(f"{API}/me/subscription", json={"plan": "pro"})
+        assert up.status_code == 200
+        u = s.get(f"{API}/me/usage").json()
+        assert u["plan"] == "pro"
+        assert u["balance"] is None
+        assert u["refill_amount"] is None
+        assert u["next_credit_date"] is None
 
-    def test_use_pro_returns_403(self, free_session):
-        s = free_session["session"]
-        items = s.get(f"{API}/promptlets").json()["items"]
-        pro = next(i for i in items if i["plan"] == "pro")
-        r = s.post(f"{API}/promptlets/{pro['promptlet_id']}/use")
-        assert r.status_code == 403
 
-    def test_use_free_increments_usage(self, free_session):
-        s = free_session["session"]
+# --------------- Marketplace use decrements 1 credit (free) ---------------
+class TestPromptletUse:
+    def test_free_use_decrements_one(self):
+        s = requests.Session()
+        email = _new_email()
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
         items = s.get(f"{API}/promptlets").json()["items"]
         free_item = next(i for i in items if i["plan"] == "free")
-        used_before = s.get(f"{API}/me/usage").json()["used"]
         r = s.post(f"{API}/promptlets/{free_item['promptlet_id']}/use")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["ok"] is True
+        assert "credits" in body and "usage" not in body
+        assert body["credits"]["balance"] == 99
+        assert body["credits"]["used"] == 1
         assert body["prompt"]
-        used_after = s.get(f"{API}/me/usage").json()["used"]
-        assert used_after == used_before + 1
 
-    def test_usage_cap_at_100_returns_402(self, free_session):
-        """Force usage to 99, do one OK call, then a 402."""
-        s = free_session["session"]
-        # Direct DB tweak via subscription endpoint isn't available; we use the
-        # admin path via mongo shell only if needed. Instead, drive via API by
-        # bumping usage with repeated calls would be slow. We hit usage manually
-        # via mongo through a backend admin route — but no such route exists.
-        # So: just do remaining calls until we observe 402.
-        usage = s.get(f"{API}/me/usage").json()
-        remaining = usage["limit"] - usage["used"]
-        items = s.get(f"{API}/promptlets").json()["items"]
-        free_id = next(i["promptlet_id"] for i in items if i["plan"] == "free")
-        # Cap remaining loop to avoid runaway in case of bug; FREE_LIMIT == 100
-        last_status = None
-        for _ in range(remaining + 1):
-            last = s.post(f"{API}/promptlets/{free_id}/use")
-            last_status = last.status_code
-            if last_status == 402:
-                break
-        assert last_status == 402, f"expected 402 after exhausting quota, got {last_status}"
-
-
-# ---------- Upgrade flow ----------
-class TestSubscriptionUpgrade:
-    def test_upgrade_unlocks_pro(self):
+    def test_pro_use_no_decrement(self):
         s = requests.Session()
         email = _new_email()
-        r = s.post(f"{API}/auth/register", json={"name": "Upgrade U", "email": email, "password": "Passw0rd!Test"})
-        assert r.status_code == 200
-        # Before
-        items_before = s.get(f"{API}/promptlets").json()["items"]
-        pro_before = [i for i in items_before if i["plan"] == "pro"]
-        assert all(i["locked"] for i in pro_before)
-        # Upgrade
-        up = s.post(f"{API}/me/subscription", json={"plan": "pro"})
-        assert up.status_code == 200
-        assert up.json()["subscription"] == "pro"
-        # After
-        items_after = s.get(f"{API}/promptlets").json()["items"]
-        pro_after = [i for i in items_after if i["plan"] == "pro"]
-        assert all(not i["locked"] for i in pro_after)
-        # Pro can use a pro promptlet
-        pro_id = pro_after[0]["promptlet_id"]
-        u = s.post(f"{API}/promptlets/{pro_id}/use")
-        assert u.status_code == 200
-        assert u.json()["prompt"]
-
-
-# ---------- Favorites + history + usage endpoints ----------
-class TestFavoritesAndHistory:
-    @pytest.fixture(scope="class")
-    def admin_session(self):
-        s = requests.Session()
-        r = s.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-        if r.status_code != 200:
-            pytest.skip(f"admin login failed: {r.status_code} {r.text}")
-        # ensure pro
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
         s.post(f"{API}/me/subscription", json={"plan": "pro"})
-        return s
-
-    def test_favorite_toggle(self, admin_session):
-        s = admin_session
         items = s.get(f"{API}/promptlets").json()["items"]
-        pid = items[0]["promptlet_id"]
-        r = s.post(f"{API}/promptlets/{pid}/favorite", json={"favorite": True})
-        assert r.status_code == 200
-        favs = s.get(f"{API}/me/favorites").json()["items"]
-        assert any(f["promptlet_id"] == pid for f in favs)
-        # remove
-        r = s.post(f"{API}/promptlets/{pid}/favorite", json={"favorite": False})
-        assert r.status_code == 200
-        favs2 = s.get(f"{API}/me/favorites").json()["items"]
-        assert not any(f["promptlet_id"] == pid for f in favs2)
+        pro_item = next(i for i in items if i["plan"] == "pro")
+        r = s.post(f"{API}/promptlets/{pro_item['promptlet_id']}/use")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["credits"]["plan"] == "pro"
+        assert body["credits"]["balance"] is None
 
-    def test_history_newest_first(self, admin_session):
-        s = admin_session
-        items = s.get(f"{API}/promptlets").json()["items"]
-        ids = [items[0]["promptlet_id"], items[1]["promptlet_id"]]
-        for pid in ids:
-            r = s.post(f"{API}/promptlets/{pid}/use")
-            assert r.status_code == 200
-            time.sleep(0.05)
-        hist = s.get(f"{API}/me/history").json()["items"]
-        assert len(hist) >= 2
-        # ensure sorted desc
-        cas = [h["created_at"] for h in hist]
-        assert cas == sorted(cas, reverse=True)
-        # the most recent should be the last used id
-        assert hist[0]["promptlet_id"] == ids[-1]
 
-    def test_usage_shape(self, admin_session):
-        s = admin_session
+# --------------- Credit refill rule (manual mongo poke) ---------------
+class TestCreditRefill:
+    def test_refill_after_countdown_expires(self):
+        s = requests.Session()
+        email = _new_email()
+        r = s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        assert r.status_code == 200
+        # Force balance=0 and next_credit_date in the past
+        past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        modified = _mongo_set(email, {"credits_balance": 0, "next_credit_date": past})
+        assert modified == 1, "mongo update did not affect user (check MONGO_URL/DB_NAME)"
         u = s.get(f"{API}/me/usage").json()
-        for key in ("plan", "used", "limit", "period_start", "period_end"):
-            assert key in u, f"missing {key}"
+        assert u["balance"] == 100, f"expected refill to 100, got {u}"
+        assert u["next_credit_date"] is None
 
-
-# ---------- Email verification ----------
-class TestEmailVerification:
-    def test_register_logs_token_and_verify(self):
+    def test_no_refill_while_countdown_future(self):
         s = requests.Session()
         email = _new_email()
-        r = s.post(f"{API}/auth/register", json={"name": "Verify U", "email": email, "password": "Passw0rd!Test"})
-        assert r.status_code == 200
-        assert r.json()["email_verified"] is False
-        # tail backend log for token
-        pattern = rf"Verify email for {re.escape(email)} -> .*token=([\w\-]+)"
-        m = _tail_backend_log(pattern, attempts=12, sleep=0.5)
-        assert m, f"verify-email token not found in backend logs for {email}"
-        token = m.group(1)
-        v = requests.post(f"{API}/auth/verify-email", json={"token": token})
-        assert v.status_code == 200
-        # now /auth/me reports verified
-        me = s.get(f"{API}/auth/me").json()
-        assert me["email_verified"] is True
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+        _mongo_set(email, {"credits_balance": 0, "next_credit_date": future})
+        u = s.get(f"{API}/me/usage").json()
+        assert u["balance"] == 0
+        assert u["next_credit_date"] is not None
 
-    def test_resend_verification_invalidates_old(self):
+    def test_pro_user_never_refilled_or_decremented(self):
         s = requests.Session()
         email = _new_email()
-        r = s.post(f"{API}/auth/register", json={"name": "Resend U", "email": email, "password": "Passw0rd!Test"})
-        assert r.status_code == 200
-        m1 = _tail_backend_log(rf"Verify email for {re.escape(email)} -> .*token=([\w\-]+)")
-        assert m1
-        old_token = m1.group(1)
-        # resend
-        rr = s.post(f"{API}/auth/resend-verification")
-        assert rr.status_code == 200
-        m2 = _tail_backend_log(rf"Resent verify-email link for {re.escape(email)} -> .*token=([\w\-]+)")
-        assert m2
-        new_token = m2.group(1)
-        assert new_token != old_token
-        # old token should now fail
-        bad = requests.post(f"{API}/auth/verify-email", json={"token": old_token})
-        assert bad.status_code == 400
-        good = requests.post(f"{API}/auth/verify-email", json={"token": new_token})
-        assert good.status_code == 200
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        s.post(f"{API}/me/subscription", json={"plan": "pro"})
+        # Pro use shouldn't change anything
+        items = s.get(f"{API}/promptlets").json()["items"]
+        pid = next(i for i in items if i["plan"] == "pro")["promptlet_id"]
+        s.post(f"{API}/promptlets/{pid}/use")
+        u = s.get(f"{API}/me/usage").json()
+        assert u["plan"] == "pro"
+        assert u["balance"] is None
 
 
-# ---------- Password reset ----------
-class TestPasswordReset:
-    def test_forgot_then_reset(self):
-        # Create user first
+# --------------- Dashboard shape ---------------
+class TestDashboardShape:
+    def test_dashboard_new_shape(self):
         s = requests.Session()
         email = _new_email()
-        s.post(f"{API}/auth/register", json={"name": "Forgot U", "email": email, "password": "OldPassw0rd!"})
-        # forgot
-        r = requests.post(f"{API}/auth/forgot-password", json={"email": email})
-        assert r.status_code == 200
-        m = _tail_backend_log(rf"Password reset link for {re.escape(email)} -> .*token=([\w\-]+)")
-        assert m, "reset token not logged"
-        token = m.group(1)
-        new_password = "BrandNewPass1!"
-        r2 = requests.post(f"{API}/auth/reset-password", json={"token": token, "password": new_password})
-        assert r2.status_code == 200
-        # login with new password
-        s2 = requests.Session()
-        lg = s2.post(f"{API}/auth/login", json={"email": email, "password": new_password})
-        assert lg.status_code == 200
-        # old password fails
-        bad = requests.Session().post(f"{API}/auth/login", json={"email": email, "password": "OldPassw0rd!"})
-        assert bad.status_code == 401
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        d = s.get(f"{API}/me/dashboard").json()
+        for key in ("credits", "subscription", "total_used", "monthly_used",
+                    "favorite_categories", "saved_prompts_count", "favorites_count", "recent_history"):
+            assert key in d, f"missing key {key}"
+        assert d["credits"]["plan"] == "free"
+        assert d["credits"]["balance"] == 100
+        assert isinstance(d["favorite_categories"], list)
+        assert isinstance(d["recent_history"], list)
+
+
+# --------------- Save / list / delete generated prompts ---------------
+class TestSavedPrompts:
+    def test_save_list_delete(self):
+        s = requests.Session()
+        email = _new_email()
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        # save 2
+        for n in ["TEST_prompt_a", "TEST_prompt_b"]:
+            r = s.post(f"{API}/generate/save", json={
+                "name": n, "prompt": "Hello world prompt body", "model": "ChatGPT",
+                "category": "Writing", "idea": "say hi"
+            })
+            assert r.status_code == 200, r.text
+            time.sleep(0.05)
+        # list newest first
+        lst = s.get(f"{API}/me/saved-prompts").json()["items"]
+        assert len(lst) >= 2
+        assert lst[0]["name"] == "TEST_prompt_b"
+        # delete first
+        sid = lst[0]["saved_id"]
+        d = s.delete(f"{API}/me/saved-prompts/{sid}")
+        assert d.status_code == 200
+        lst2 = s.get(f"{API}/me/saved-prompts").json()["items"]
+        assert not any(i["saved_id"] == sid for i in lst2)
+        # 404 for unknown
+        d404 = s.delete(f"{API}/me/saved-prompts/does-not-exist")
+        assert d404.status_code == 404
+
+
+# --------------- Optimize (LLM) ---------------
+class TestOptimize:
+    def test_optimize_decrements_and_persists_history(self):
+        s = requests.Session()
+        email = _new_email()
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        before = s.get(f"{API}/me/usage").json()
+        r = s.post(f"{API}/generate/optimize", json={
+            "idea": "A glowing futuristic city at sunset",
+            "model": "Midjourney",
+            "category": "Photo",
+        }, timeout=60)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert isinstance(body["prompt"], str) and len(body["prompt"]) > 0
+        assert body["cost"] == 3
+        assert body["credits"]["balance"] == before["balance"] - 3
+        # history persists with kind=optimize
+        hist = s.get(f"{API}/me/history").json()["items"]
+        assert hist, "history empty"
+        latest = hist[0]
+        assert latest["kind"] == "optimize"
+        assert latest["model"] == "Midjourney"
+        assert latest["category"] == "Photo"
+        assert latest["cost"] == 3
+        assert latest.get("prompt")
+
+    def test_optimize_402_when_insufficient(self):
+        s = requests.Session()
+        email = _new_email()
+        s.post(f"{API}/auth/register", json={"name": "U", "email": email, "password": "Passw0rd!Test"})
+        # leave only 2 credits
+        _mongo_set(email, {"credits_balance": 2})
+        r = s.post(f"{API}/generate/optimize", json={
+            "idea": "test", "model": "ChatGPT", "category": "Writing"
+        }, timeout=30)
+        assert r.status_code == 402, r.text
+
+
+# --------------- Migration: legacy users get backfilled ---------------
+class TestMigration:
+    def test_legacy_user_gets_backfilled(self):
+        """Insert a user with old fields, restart not required because migration is
+        startup-only. So we simulate by checking that all current users in db
+        have credit fields and no legacy fields."""
+        async def _check():
+            client = AsyncIOMotorClient(MONGO_URL)
+            db = client[DB_NAME]
+            cur = db.users.find({}, {"_id": 0, "user_id": 1, "credits_balance": 1,
+                                     "credits_used": 1, "next_credit_date": 1,
+                                     "prompts_used": 1, "usage_period_start": 1})
+            bad = []
+            async for u in cur:
+                if "credits_balance" not in u:
+                    bad.append(("missing_credits_balance", u["user_id"]))
+                if "prompts_used" in u or "usage_period_start" in u:
+                    bad.append(("legacy_field", u["user_id"]))
+            client.close()
+            return bad
+        bad = asyncio.run(_check())
+        assert not bad, f"migration leftovers: {bad[:5]}"

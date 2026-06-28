@@ -1,5 +1,5 @@
 import "@/index.css";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -7,10 +7,12 @@ import Landing from "@/pages/Landing";
 import SignIn from "@/pages/SignIn";
 import SignUp from "@/pages/SignUp";
 import Dashboard from "@/pages/Dashboard";
+import Generate from "@/pages/Generate";
 import Marketplace from "@/pages/Marketplace";
-import Favorites from "@/pages/Favorites";
 import HistoryPage from "@/pages/HistoryPage";
-import Account from "@/pages/Account";
+import Saved from "@/pages/Saved";
+import Billing from "@/pages/Billing";
+import Settings from "@/pages/Settings";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import VerifyEmail from "@/pages/VerifyEmail";
@@ -32,10 +34,16 @@ function AppRouter() {
       <Route path="/verify-email" element={<VerifyEmail />} />
 
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/generate" element={<ProtectedRoute><Generate /></ProtectedRoute>} />
       <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
-      <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
       <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-      <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
+      <Route path="/saved" element={<ProtectedRoute><Saved /></ProtectedRoute>} />
+      <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+
+      {/* Legacy redirects */}
+      <Route path="/favorites" element={<Navigate to="/saved" replace />} />
+      <Route path="/account" element={<Navigate to="/settings" replace />} />
     </Routes>
   );
 }

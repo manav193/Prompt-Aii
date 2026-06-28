@@ -21,9 +21,11 @@ export default function PromptletCard({ item, onChange, index = 0 }) {
       const { data } = await api.post(`/promptlets/${item.promptlet_id}/use`);
       await navigator.clipboard.writeText(data.prompt || "").catch(() => {});
       setCopied(true);
-      toast.success(`Prompt copied · ${data.usage.remaining ?? "∞"} prompts left this month`);
+      const cr = data.credits;
+      const tail = cr?.plan === "pro" ? "Unlimited credits" : `${cr?.balance ?? "?"} credits left`;
+      toast.success(`Prompt copied · ${tail}`);
       setTimeout(() => setCopied(false), 1800);
-      onChange?.({ type: "used", usage: data.usage });
+      onChange?.({ type: "used", credits: cr });
     } catch (err) {
       const msg = formatApiErrorDetail(err.response?.data?.detail) || err.message;
       toast.error(msg);

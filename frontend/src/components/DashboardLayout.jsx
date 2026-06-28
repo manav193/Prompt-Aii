@@ -1,16 +1,18 @@
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { LayoutGrid, Store, Heart, History, Settings, LogOut, Sparkles, ArrowUpRight, AlertTriangle } from "lucide-react";
+import { LayoutGrid, Wand2, Store, History, Heart, CreditCard, Settings, LogOut, Sparkles, ArrowUpRight, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
 const nav = [
-  { to: "/dashboard", label: "Overview", icon: LayoutGrid, testid: "side-overview" },
-  { to: "/marketplace", label: "Marketplace", icon: Store, testid: "side-marketplace" },
-  { to: "/favorites", label: "Favorites", icon: Heart, testid: "side-favorites" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutGrid, testid: "side-dashboard" },
+  { to: "/generate", label: "Generate", icon: Wand2, testid: "side-generate" },
+  { to: "/marketplace", label: "Promptlets", icon: Store, testid: "side-marketplace" },
   { to: "/history", label: "History", icon: History, testid: "side-history" },
-  { to: "/account", label: "Account", icon: Settings, testid: "side-account" },
+  { to: "/saved", label: "Saved", icon: Heart, testid: "side-saved" },
+  { to: "/billing", label: "Billing", icon: CreditCard, testid: "side-billing" },
+  { to: "/settings", label: "Settings", icon: Settings, testid: "side-settings" },
 ];
 
 export default function DashboardLayout({ children }) {
