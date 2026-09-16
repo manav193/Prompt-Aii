@@ -1,0 +1,39 @@
+name: PromptAI provider cleanup final
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Migrate backend to NIMO-CORE
+        run: python scripts/cleanup_legacy_provider.py
+
+      - name: Validate
+        run: |
+          python -m py_compile backend/server.py backend/services/nimo_client.py
+          if grep -RniE 'emergent|EMERGENT_LLM_KEY|auth\.emergentagent\.com|emergentintegrations|customer-assets\.emergentagent\.com' frontend backend memory auth_testing.md --exclude-dir=node_modules --exclude-dir=.git; then
+            echo "Legacy provider references remain"
+            exit 1
+          fi
+
+      - name: Commit migrated code
+        run: |
+          git config user.name "PromptAI Automation"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend frontend memory auth_testing.md
+          git diff --cached --quiet || git commit -m "architecture: route PromptAI AI operations through NIMO-CORE"
+          git push
+
+      - name: Remove one-shot tooling
+        run: |
+          git rm scripts/cleanup_legacy_provider.py .github/workflows/provider-cleanup-final.yml .github/workflows/finish-provider-removal.yml
+          git commit -m "chore: remove temporary cleanup tooling"
+          git push
