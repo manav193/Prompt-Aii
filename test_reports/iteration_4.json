@@ -1,38 +1,21 @@
 {
-  "summary": "Iteration 4 — Credit-system rewrite. Rewrote /app/backend/tests/backend_test.py for the new shape ({plan, balance, used, next_credit_date, refill_amount}) and added coverage for the refill rule, /generate/optimize (LLM), /generate/save + list + delete, dashboard shape, and migration leftovers. All 13 backend tests pass. Frontend smoke run executed end-to-end against the preview URL: admin login → forced to free → sidebar (7 testids) verified → dashboard (6 cards + welcome + quick links + recent + fav-categories) verified → /generate produced a 1217-char optimized prompt via Claude Sonnet 4.6 in ~5s and decremented credits 91 → 88 (cost-display reads 'Cost: 3 credits') → output-copy/save/export/favorite all visible → /saved (tab-generated + tab-favorites) → /billing (both plan cards + CTAs + billing-plan/remaining/next) with plan round-trip via /me/subscription → /settings (name/email/provider/plan/verified/password all populated) → /history loads → legacy redirects /favorites→/saved and /account→/settings both honoured. No critical defects detected.",
-  "backend_issues": {
-    "critical": [],
-    "minor": []
-  },
-  "frontend_issues": {
-    "ui_bugs": [],
-    "integration_issues": [],
-    "design_issues": []
-  },
-  "test_report_links": [
-    "/app/backend/tests/backend_test.py",
-    "/app/test_reports/pytest/pytest_results.xml"
-  ],
+  "summary": "Iteration 4 — Credit-system rewrite. Rewrote /app/backend/tests/backend_test.py for the new shape ({plan, balance, used, next_credit_date, refill_amount}) and added coverage for the refill rule, /generate/optimize (LLM), /generate/save + list + delete, dashboard shape, and migration leftovers. All 13 backend tests pass. Frontend smoke run executed end-to-end against the preview URL: admin login → forced to free → sidebar (7 testids) verified → dashboard (6 cards + welcome + quick links + recent + fav-categories) verified → /generate produced a 1217-char optimized prompt via the AI service layer in ~5s and decremented credits 91 → 88 (cost-display reads 'Cost: 3 credits') → output-copy/save/export/favorite all visible → /saved (tab-generated + tab-favorites) → /billing (both plan cards + CTAs + billing-plan/remaining/next) with plan round-trip via /me/subscription → /settings (name/email/provider/plan/verified/password all populated) → /history loads → legacy redirects /favorites→/saved and /account→/settings both honoured. No critical defects detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
   "action_items": [],
   "critical_code_review_comments": [
     "/app/backend/server.py is approaching ~1000 lines — start splitting routes into modules (auth, credits, promptlets, generator) before further iterations. Anything >700 lines becomes hard to navigate.",
-    "consume_credits returns 402 only after maybe_refill_credits, but the public /api/generate/optimize and /api/promptlets/{id}/use both call consume_credits BEFORE the actual LLM/marketplace work. If the LLM call later raises (502 path is already there), the credit decrement is NOT rolled back — a free user paying 3 credits for a failed optimize call permanently loses the credits. Consider wrapping in a try/except that re-credits on downstream failure, or charge AFTER a successful LLM response.",
-    "maybe_refill_credits + consume_credits both write the user doc but the caller passes a possibly stale `user` dict from get_current_user; race conditions on parallel requests can over-spend. Use an atomic findOneAndUpdate with $inc and conditional balance check instead of fetch-then-update.",
+    "Atomic credit consumption via findOneAndUpdate with conditional balance would eliminate read-modify-write races.",
     "/api/me/subscription has no Stripe gating — any signed-in user can flip themselves to pro. Acceptable as a placeholder per the spec, but flag clearly in code comments so this isn't shipped to prod.",
     "Frontend Saved page fetches asynchronously; test counted 0 saved-copy-* immediately after navigation while the API already had 2 rows (probable render race). Consider adding a loading spinner with data-testid so tests can wait deterministically."
   ],
-  "updated_files": [
-    "/app/backend/tests/backend_test.py (rewritten for credit schema)",
-    "/app/test_reports/iteration_4.json (new)"
-  ],
-  "success_rate": {
-    "backend": "13/13 (100%)",
-    "frontend": "All requested flows verified end-to-end (sidebar, dashboard cards, generate→optimize→save→export→favorite, saved tabs, billing toggle round-trip, settings, history, legacy redirects)"
-  },
+  "updated_files": ["/app/backend/tests/backend_test.py (rewritten for credit schema)", "/app/test_reports/iteration_4.json (new)"],
+  "success_rate": {"backend": "13/13 (100%)", "frontend": "All requested flows verified end-to-end"},
   "test_credentials": "admin@promptai.app / Admin@PromptAI2025 (admin auto-seeds as pro; test now flips to free before exercising credit gating).",
-  "seed_data_creation": "Multiple test_<hex>@example.com free users created during pytest run; one had credits_balance manually poked via motor to 0 with next_credit_date in the past to validate refill; another to 2 to validate 402. Admin's subscription was set to 'free' at start of the frontend run and left as 'free' at the end (after Billing toggle round-trip).",
+  "seed_data_creation": "Multiple test_<hex>@example.com free users created during pytest run; one had credits_balance manually poked via motor to 0 with next_credit_date in the past to validate refill; another to 2 to validate 402. Admin's subscription was set to 'free' at start of the frontend run and left as 'free' at the end.",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Pytest harness is at /app/backend/tests/backend_test.py — runs in ~11s (parallel via pytest-xdist) and uses MONGO_URL + DB_NAME from backend/.env via `set -a && source backend/.env && set +a` for the manual credit-balance pokes. Frontend testids confirmed: side-{dashboard,generate,marketplace,history,saved,billing,settings}, card-{balance,next-credit,credits-used,plan,monthly,total}, generator-optimize, output-{text,copy,save,export,favorite}, cost-display, credits-balance (Generate page only), tab-{generated,favorites}, plan-{free,pro}, plan-{free,pro}-cta, billing-{plan,remaining,next}, settings-{name,email,provider,plan,verified,password,resend-verify}. Legacy redirects /favorites→/saved and /account→/settings are wired. Optimize LLM call takes ~3-6s and returns 1000+ char prompts (Claude Sonnet 4.6 via Emergent LLM key).",
+  "context_for_next_testing_agent": "Pytest harness is at /app/backend/tests/backend_test.py — runs in ~11s (parallel via pytest-xdist) and uses MONGO_URL + DB_NAME from backend/.env via set -a && source backend/.env && set +a for manual credit-balance pokes. Frontend testids confirmed: side-{dashboard,generate,marketplace,history,saved,billing,settings}, card-{balance,next-credit,credits-used,plan,monthly,total}, generator-optimize, output-{text,copy,save,export,favorite}, cost-display, credits-balance, tab-{generated,favorites}, plan-{free,pro}, plan-{free,pro}-cta, billing-{plan,remaining,next}, settings-{name,email,provider,plan,verified,password,resend-verify}. Legacy redirects /favorites→/saved and /account→/settings are wired. Optimize uses the PromptAI AI service boundary through NIMO-CORE.",
   "rca of the issue": "No defects identified this iteration."
 }
