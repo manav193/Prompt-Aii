@@ -8,6 +8,7 @@ import SignIn from "@/pages/SignIn";
 import SignUp from "@/pages/SignUp";
 import Dashboard from "@/pages/Dashboard";
 import Generate from "@/pages/Generate";
+import ReversePrompt from "@/pages/ReversePrompt";
 import Marketplace from "@/pages/Marketplace";
 import PromptDetail from "@/pages/PromptDetail";
 import Collections from "@/pages/Collections";
@@ -37,6 +38,7 @@ function AppRouter() {
 
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/generate" element={<ProtectedRoute><Generate /></ProtectedRoute>} />
+      <Route path="/reverse-prompt" element={<ProtectedRoute><ReversePrompt /></ProtectedRoute>} />
       <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
       <Route path="/promptlets/:slug" element={<ProtectedRoute><PromptDetail /></ProtectedRoute>} />
       <Route path="/collections" element={<ProtectedRoute><Collections /></ProtectedRoute>} />
