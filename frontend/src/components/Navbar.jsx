@@ -40,17 +40,12 @@ export default function Navbar() {
           </ul>
 
           <div className="flex items-center gap-2">
-            {user ? (
+            {user && (
               <>
                 <NavLink to="/dashboard" className="hidden sm:inline-flex btn-ghost-glass rounded-full px-4 py-2 text-sm" data-testid="navbar-dashboard">Dashboard</NavLink>
                 <button onClick={handleLogout} className="btn-ghost-glass rounded-full px-3 py-2 text-sm inline-flex items-center gap-2" data-testid="navbar-logout">
                   <LogOut className="h-4 w-4" /> <span className="hidden sm:inline">Log out</span>
                 </button>
-              </>
-            ) : (
-              <>
-                <Link to="/signin" className="btn-ghost-glass rounded-full px-4 py-2 text-sm" data-testid="navbar-signin">Sign in</Link>
-                <Link to="/signup" className="btn-primary rounded-full px-4 py-2 text-sm font-semibold" data-testid="navbar-signup">Get Started</Link>
               </>
             )}
           </div>
