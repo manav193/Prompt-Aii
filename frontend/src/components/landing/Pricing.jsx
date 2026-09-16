@@ -8,7 +8,7 @@ const tiers = [
     cadence: "forever",
     desc: "For curious creators getting started.",
     features: ["50 prompts / month", "Access to 5 models", "Personal prompt library", "Community support"],
-    cta: "Start free",
+    cta: "Coming soon",
     featured: false,
     testid: "pricing-free",
   },
@@ -18,7 +18,7 @@ const tiers = [
     cadence: "/ month",
     desc: "Everything you need to ship serious work.",
     features: ["Unlimited prompts", "All 15+ models", "Versioning + A/B testing", "Workflows & chains", "Priority support"],
-    cta: "Upgrade to Pro",
+    cta: "Coming soon",
     featured: true,
     testid: "pricing-pro",
   },
@@ -76,15 +76,23 @@ export default function Pricing() {
                   </li>
                 ))}
               </ul>
-              <Link
-                to={t.name === "Enterprise" ? "#contact" : "/signup"}
-                className={`mt-8 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold ${
-                  t.featured ? "btn-primary" : "btn-ghost-glass"
-                }`}
-                data-testid={`${t.testid}-cta`}
-              >
-                {t.cta}
-              </Link>
+              {t.name === "Enterprise" ? (
+                <Link
+                  to="#contact"
+                  className="mt-8 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold btn-ghost-glass"
+                  data-testid={`${t.testid}-cta`}
+                >
+                  {t.cta}
+                </Link>
+              ) : (
+                <span
+                  className="mt-8 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold btn-ghost-glass opacity-60 cursor-not-allowed"
+                  aria-disabled="true"
+                  data-testid={`${t.testid}-cta`}
+                >
+                  {t.cta}
+                </span>
+              )}
             </div>
           ))}
         </div>
