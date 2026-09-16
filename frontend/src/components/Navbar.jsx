@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { Sparkles, LogOut } from "lucide-react";
+import { Sparkles, LogOut, MessageCircle } from "lucide-react";
 
 const links = [
   { to: "/#features", label: "Features" },
@@ -40,6 +40,9 @@ export default function Navbar() {
           </ul>
 
           <div className="flex items-center gap-2">
+            <NavLink to="/nimo-chat" className="btn-ghost-glass rounded-full px-3 sm:px-4 py-2 text-sm inline-flex items-center gap-2 border border-cyan/20" data-testid="navbar-nimo-chat">
+              <MessageCircle className="h-4 w-4 text-cyan" /> <span>NIMO Chat</span>
+            </NavLink>
             {user && (
               <>
                 <NavLink to="/dashboard" className="hidden sm:inline-flex btn-ghost-glass rounded-full px-4 py-2 text-sm" data-testid="navbar-dashboard">Dashboard</NavLink>
