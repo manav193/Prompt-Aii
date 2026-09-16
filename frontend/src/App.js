@@ -42,7 +42,7 @@ function AppRouter() {
       <Route path="/convert" element={<ProtectedRoute><Convert /></ProtectedRoute>} />
       <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
       <Route path="/saved" element={<ProtectedRoute><Saved /></ProtectedRoute>} />
-      <Route path="/billing" element={<ProtectedRoute><Billing /></Route>} />
+      <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
 
