@@ -21,40 +21,125 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("backend/server.py")
-          text = path.read_text()
-
+          server = Path("backend/server.py")
+          text = server.read_text()
           text = text.replace('import httpx\n', '')
           text = text.replace('EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"\n', '')
           text = re.sub(r'\nclass GoogleSessionBody\(BaseModel\):\n    session_id: str\n', '\n', text)
+          text = re.sub(r'\n# --- Auth: Google \(Emergent Managed OAuth\) ---.*?\n# --- Newsletter ---', '\n# --- Newsletter ---', text, flags=re.S)
 
-          text = re.sub(
-              r'\n# --- Auth: Google \(Emergent Managed OAuth\) ---.*?\n# --- Newsletter ---',
-              '\n# --- Newsletter ---',
-              text,
-              flags=re.S,
-          )
+          optimize = r'''
+@api.post("/generate/optimize")
+async def optimize_prompt(body: OptimizeBody, user: dict = Depends(get_current_user)):
+    user = await maybe_refill_credits(user)
+    balance = int(user.get("credits_balance", 0))
+    if user.get("subscription") != "pro" and balance < OPTIMIZE_COST:
+        raise HTTPException(status_code=402, detail=f"Not enough credits. You need {OPTIMIZE_COST} but have {balance}. Upgrade to Pro for unlimited credits.")
 
-          optimize = '''\n@api.post("/generate/optimize")\nasync def optimize_prompt(body: OptimizeBody, user: dict = Depends(get_current_user)):\n    user = await maybe_refill_credits(user)\n    if user.get("subscription") != "pro" and int(user.get("credits_balance", 0)) < OPTIMIZE_COST:\n        raise HTTPException(\n            status_code=402,\n            detail=f"Not enough credits. You need {OPTIMIZE_COST} but have {int(user.get('credits_balance', 0))}. Upgrade to Pro for unlimited credits.",\n        )\n\n    instruction = (\n        "You are PromptAI's prompt-engineering co-pilot. Given a user's plain-English idea, "\n        "target AI model and category, produce one polished, production-ready prompt that is "\n        "idiomatic for that model and category. Output ONLY the optimized prompt, with no preamble, "\n        "quotes or commentary. Preserve proper nouns and concrete details. Keep it under 220 words."\n    )\n    user_text = f"Target model: {body.model}\\nCategory: {body.category}\\nUser idea:\\n{body.idea.strip()}"\n\n    try:\n        from services.nimo_client import NimoCoreError, generate_text\n        optimized = await generate_text(\n            instruction=instruction,\n            user_text=user_text,\n            request_id=f"optimize-{uuid.uuid4().hex[:12]}",\n        )\n    except Exception as exc:\n        logger.exception("NIMO-CORE optimizer call failed")\n        raise HTTPException(status_code=502, detail=f"Optimizer is unavailable right now: {exc}")\n\n    user = await consume_credits(user, OPTIMIZE_COST)\n    history_doc = {\n        "history_id": uuid.uuid4().hex,\n        "user_id": user["user_id"],\n        "kind": "optimize",\n        "promptlet_name": (body.idea.strip().split("\\n")[0][:80] or "Custom prompt"),\n        "category": body.category,\n        "model": body.model,\n        "idea": body.idea.strip(),\n        "prompt": optimized,\n        "cost": OPTIMIZE_COST,\n        "created_at": now_iso(),\n    }\n    await db.prompt_history.insert_one(history_doc)\n    return {"ok": True, "prompt": optimized, "credits": credit_summary(user), "cost": OPTIMIZE_COST, "history_id": history_doc["history_id"]}\n\n\n@api.post("/generate/save")'''
+    instruction = (
+        "You are PromptAI's prompt-engineering co-pilot. Given a user's plain-English idea, "
+        "target AI model and category, produce one polished, production-ready prompt that is "
+        "idiomatic for that model and category. Output ONLY the optimized prompt, with no preamble, "
+        "quotes or commentary. Preserve proper nouns and concrete details. Keep it under 220 words."
+    )
+    nl = chr(10)
+    user_text = f"Target model: {body.model}{nl}Category: {body.category}{nl}User idea:{nl}{body.idea.strip()}"
+
+    try:
+        from services.nimo_client import generate_text
+        optimized = await generate_text(instruction=instruction, user_text=user_text, request_id=f"optimize-{uuid.uuid4().hex[:12]}")
+    except Exception as exc:
+        logger.exception("NIMO-CORE optimizer call failed")
+        raise HTTPException(status_code=502, detail=f"Optimizer is unavailable right now: {exc}")
+
+    user = await consume_credits(user, OPTIMIZE_COST)
+    history_doc = {
+        "history_id": uuid.uuid4().hex,
+        "user_id": user["user_id"],
+        "kind": "optimize",
+        "promptlet_name": (body.idea.strip().split(nl)[0][:80] or "Custom prompt"),
+        "category": body.category,
+        "model": body.model,
+        "idea": body.idea.strip(),
+        "prompt": optimized,
+        "cost": OPTIMIZE_COST,
+        "created_at": now_iso(),
+    }
+    await db.prompt_history.insert_one(history_doc)
+    return {"ok": True, "prompt": optimized, "credits": credit_summary(user), "cost": OPTIMIZE_COST, "history_id": history_doc["history_id"]}
+
+
+@api.post("/generate/save")'''
           text = re.sub(r'\n@api.post\("/generate/optimize"\).*?\n@api.post\("/generate/save"\)', optimize, text, flags=re.S)
 
-          convert = '''\n@api.post("/convert")\nasync def convert_prompt(body: ConvertBody, user: dict = Depends(get_current_user)):\n    user = await maybe_refill_credits(user)\n    if user.get("subscription") != "pro" and int(user.get("credits_balance", 0)) < CONVERT_COST:\n        raise HTTPException(status_code=402, detail=f"Need {CONVERT_COST} credits, have {int(user.get('credits_balance', 0))}.")\n\n    instruction = (\n        "You are PromptAI's prompt converter. Convert a prompt written for one AI model into the "\n        "idiomatic, production-ready form for another AI model. Output ONLY the converted prompt, "\n        "with no preamble, quotes or commentary. Preserve all concrete details and intent. "\n        "Keep it under 240 words."\n    )\n    user_text = (\n        f"SOURCE MODEL: {body.source_model}\\n"\n        f"TARGET MODEL: {body.target_model}\\n\\n"\n        f"ORIGINAL PROMPT:\\n{body.prompt.strip()}"\n    )\n\n    try:\n        from services.nimo_client import generate_text\n        converted = await generate_text(\n            instruction=instruction,\n            user_text=user_text,\n            request_id=f"convert-{uuid.uuid4().hex[:12]}",\n        )\n    except Exception as exc:\n        logger.exception("NIMO-CORE converter call failed")\n        raise HTTPException(status_code=502, detail=f"Converter is unavailable right now: {exc}")\n\n    user = await consume_credits(user, CONVERT_COST)\n    history_doc = {\n        "history_id": uuid.uuid4().hex,\n        "user_id": user["user_id"],\n        "kind": "convert",\n        "promptlet_name": f"Convert {body.source_model} → {body.target_model}",\n        "category": "Convert",\n        "model": body.target_model,\n        "idea": body.prompt.strip()[:200],\n        "prompt": converted,\n        "cost": CONVERT_COST,\n        "created_at": now_iso(),\n    }\n    await db.prompt_history.insert_one(history_doc)\n    return {"ok": True, "prompt": converted, "credits": credit_summary(user), "cost": CONVERT_COST}\n\n\n# ---------------------------------------------------------------------------\n# Admin'''
-          text = re.sub(r'\n@api.post\("/convert"\).*?\n# ---------------------------------------------------------------------------\n# Admin', convert, text, flags=re.S)
+          convert = r'''
+@api.post("/convert")
+async def convert_prompt(body: ConvertBody, user: dict = Depends(get_current_user)):
+    user = await maybe_refill_credits(user)
+    balance = int(user.get("credits_balance", 0))
+    if user.get("subscription") != "pro" and balance < CONVERT_COST:
+        raise HTTPException(status_code=402, detail=f"Need {CONVERT_COST} credits, have {balance}.")
 
-          path.write_text(text)
-      
-      - name: Verify no legacy provider code remains
+    instruction = (
+        "You are PromptAI's prompt converter. Convert a prompt written for one AI model into the "
+        "idiomatic, production-ready form for another AI model. Output ONLY the converted prompt, "
+        "with no preamble, quotes or commentary. Preserve all concrete details and intent. "
+        "Keep it under 240 words."
+    )
+    nl = chr(10)
+    user_text = (
+        f"SOURCE MODEL: {body.source_model}{nl}"
+        f"TARGET MODEL: {body.target_model}{nl}{nl}"
+        f"ORIGINAL PROMPT:{nl}{body.prompt.strip()}"
+    )
+
+    try:
+        from services.nimo_client import generate_text
+        converted = await generate_text(instruction=instruction, user_text=user_text, request_id=f"convert-{uuid.uuid4().hex[:12]}")
+    except Exception as exc:
+        logger.exception("NIMO-CORE converter call failed")
+        raise HTTPException(status_code=502, detail=f"Converter is unavailable right now: {exc}")
+
+    user = await consume_credits(user, CONVERT_COST)
+    history_doc = {
+        "history_id": uuid.uuid4().hex,
+        "user_id": user["user_id"],
+        "kind": "convert",
+        "promptlet_name": f"Convert {body.source_model} → {body.target_model}",
+        "category": "Convert",
+        "model": body.target_model,
+        "idea": body.prompt.strip()[:200],
+        "prompt": converted,
+        "cost": CONVERT_COST,
+        "created_at": now_iso(),
+    }
+    await db.prompt_history.insert_one(history_doc)
+    return {"ok": True, "prompt": converted, "credits": credit_summary(user), "cost": CONVERT_COST}
+
+
+# ---------------------------------------------------------------------------
+# Admin'''
+          text = re.sub(r'\n@api.post\("/convert"\).*?\n# ---------------------------------------------------------------------------\n# Admin', convert, text, flags=re.S)
+          server.write_text(text)
+
+          tests = Path("backend/tests/backend_test.py")
+          if tests.exists():
+              test_text = tests.read_text().replace("https://prompt-craft-demo.preview.emergentagent.com", "http://localhost:8001")
+              tests.write_text(test_text)
+
+      - name: Verify backend syntax and remove legacy provider references
         run: |
-          ! grep -RniE 'emergent|EMERGENT_LLM_KEY|auth\.emergentagent\.com|emergentintegrations|customer-assets\.emergentagent\.com' frontend backend memory auth_testing.md --exclude-dir=node_modules --exclude-dir=.git
           python -m py_compile backend/server.py backend/services/nimo_client.py
+          if grep -RniE 'emergent|EMERGENT_LLM_KEY|auth\.emergentagent\.com|emergentintegrations|customer-assets\.emergentagent\.com' frontend backend memory auth_testing.md --exclude-dir=node_modules --exclude-dir=.git; then
+            echo "Legacy provider references remain."
+            exit 1
+          fi
 
       - name: Commit cleanup
         run: |
           git config user.name "PromptAI Automation"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/server.py
-          git add backend/services/nimo_client.py backend/requirements.txt memory/PRD.md auth_testing.md
-          git add frontend
+          git add backend/server.py backend/tests/backend_test.py backend/services/nimo_client.py backend/requirements.txt memory/PRD.md auth_testing.md frontend
           git diff --cached --quiet || git commit -m "architecture: remove legacy provider and route AI through NIMO-CORE"
           git push
 
