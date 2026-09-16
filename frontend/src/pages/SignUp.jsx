@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Eye, EyeOff, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { AuthShell, Input, Divider, GoogleMark } from "@/pages/SignIn";
+import { AuthShell, Input } from "@/pages/SignIn";
 
 export default function SignUp() {
   const { register, formatApiErrorDetail } = useAuth();
@@ -30,18 +30,8 @@ export default function SignUp() {
     }
   };
 
-  const googleSignUp = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/dashboard";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
-
   return (
     <AuthShell title="Create your workspace." subtitle="Start free. No credit card required.">
-      <button onClick={googleSignUp} className="w-full btn-ghost-glass rounded-xl px-4 py-3 text-sm inline-flex items-center justify-center gap-2.5" data-testid="signup-google">
-        <GoogleMark /> Continue with Google
-      </button>
-      <Divider />
       <form onSubmit={submit} className="space-y-4" data-testid="signup-form">
         <Input label="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="signup-name" />
         <Input label="Work email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} testid="signup-email" />
