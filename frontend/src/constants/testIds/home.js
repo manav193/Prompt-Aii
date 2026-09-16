@@ -1,6 +1,4 @@
-// Test IDs for the home / landing feature. Naming follows the directive
-// in ./auth.js (keys camelCase, values kebab-case `<feature>-<element>`).
+// Test IDs for the home / landing feature.
+// Keys are camelCase; values are kebab-case `<feature>-<element>`.
 
-export const HOME = {
-	emergentLink: 'home-emergent-link',
-};
+export const HOME = {};
