@@ -1,14 +1,13 @@
 # PromptAI Auth Testing Playbook
 
-PromptAI supports BOTH email/password JWT auth and Emergent-managed Google OAuth.
-Both flows share the `users` collection (user_id UUID, NOT MongoDB _id).
+PromptAI uses email/password JWT authentication. Access and refresh tokens are stored in httpOnly cookies and share the `users` collection (`user_id` is the application UUID, not MongoDB `_id`).
 
 ## Admin
 - email: admin@promptai.app
 - password: Admin@PromptAI2025
 
 ## Step 1: Mongo verification
-```
+```bash
 mongosh
 use test_database
 db.users.find({role:"admin"}).pretty()
@@ -17,7 +16,7 @@ db.users.getIndexes()
 Expect a bcrypt hash starting with `$2b$` for the admin.
 
 ## Step 2: Email/password API tests
-```
+```bash
 API=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2)
 
 # Register
@@ -37,24 +36,19 @@ curl -b cookies.txt "$API/api/auth/me"
 curl -b cookies.txt -X POST "$API/api/auth/logout"
 ```
 
-## Step 3: Google session test (cannot exchange real session_id without browser)
-- Send a bogus session_id and expect 401.
-```
-curl -X POST "$API/api/auth/google/session" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"NOT_REAL"}'
-```
+## Step 3: Auth regression checks
+- There must be no hosted OAuth redirect from `/signin` or `/signup`.
+- `POST /api/auth/google/session` must not exist.
+- A request to `/api/auth/me` without cookies must return 401.
+- Dashboard routes must remain protected by the frontend auth context.
 
-## Step 4: Browser Google OAuth flow
-1. From landing page click "Continue with Google".
-2. Frontend redirects to `https://auth.emergentagent.com/?redirect={origin}/dashboard`.
-3. Emergent returns to `{origin}/dashboard#session_id=...`.
-4. App detects the fragment, calls `POST /api/auth/google/session` with `credentials: 'include'`.
-5. Backend exchanges with Emergent, upserts user, sets cookies, returns user.
-6. App removes the hash and renders the dashboard.
+## Step 4: AI service boundary
+- Generator and converter calls stay behind the PromptAI backend.
+- PromptAI calls NIMO-CORE using `NIMO_CORE_URL` and optional `NIMO_INTEGRATION_KEY`.
+- Provider API keys must remain inside NIMO-CORE and never reach the browser.
 
 ## Contact + Newsletter
-```
+```bash
 curl -X POST "$API/api/contact" -H "Content-Type: application/json" \
   -d '{"name":"X","email":"x@x.com","message":"hello there friend"}'
 
@@ -63,6 +57,7 @@ curl -X POST "$API/api/newsletter" -H "Content-Type: application/json" \
 ```
 
 ## Success criteria
-- /api/auth/me returns the user JSON when cookies are present.
-- /api/contact and /api/newsletter return `{ok: true}` and persist to MongoDB.
-- Dashboard is gated; visiting `/dashboard` without cookies should redirect to /signin.
+- `/api/auth/me` returns user JSON when valid cookies are present.
+- `/api/contact` and `/api/newsletter` return `{ok: true}` and persist to MongoDB.
+- `/api/auth/google/session` is absent.
+- No hosted third-party auth page is opened by the frontend.
