@@ -1,6 +1,5 @@
-import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, Play, Sparkles } from "lucide-react";
+import { Play, Sparkles } from "lucide-react";
 import AnimatedBackground from "@/components/AnimatedBackground";
 
 export default function Hero() {
@@ -49,9 +48,6 @@ export default function Hero() {
           transition={{ duration: 0.7, delay: 0.25 }}
           className="mt-9 flex items-center justify-center gap-3 flex-wrap"
         >
-          <Link to="/signup" className="btn-primary rounded-full px-6 py-3 text-sm font-semibold inline-flex items-center gap-2" data-testid="hero-cta-primary">
-            Start free <ArrowRight className="h-4 w-4" />
-          </Link>
           <a href="#how" className="btn-ghost-glass rounded-full px-5 py-3 text-sm inline-flex items-center gap-2" data-testid="hero-cta-secondary">
             <Play className="h-4 w-4 text-cyan" /> Watch the 90s tour
           </a>
