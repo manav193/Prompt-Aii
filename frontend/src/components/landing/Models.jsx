@@ -8,7 +8,6 @@ const models = [
   { name: "Adobe Firefly", tag: "Image · Vector", dot: "#FF0000" },
   { name: "Cursor", tag: "Code · Agent", dot: "#06B6D4" },
   { name: "Lovable", tag: "Build · Web", dot: "#FB923C" },
-  { name: "Emergent", tag: "Build · Fullstack", dot: "#A78BFA" },
   { name: "Sora", tag: "Video · 2", dot: "#FFFFFF" },
   { name: "ElevenLabs", tag: "Voice · v3", dot: "#22D3EE" },
 ];
