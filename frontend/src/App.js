@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "@/pages/Landing";
+import NimoChat from "@/pages/NimoChat";
 import Dashboard from "@/pages/Dashboard";
 import Generate from "@/pages/Generate";
 import ReversePrompt from "@/pages/ReversePrompt";
@@ -22,6 +23,7 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/nimo-chat" element={<NimoChat />} />
 
       {/* Authentication UI is temporarily hidden while the auth flow is being finalized. */}
       <Route path="/signin" element={<Navigate to="/" replace />} />
@@ -40,7 +42,7 @@ function AppRouter() {
       <Route path="/convert" element={<ProtectedRoute><Convert /></ProtectedRoute>} />
       <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
       <Route path="/saved" element={<ProtectedRoute><Saved /></ProtectedRoute>} />
-      <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
+      <Route path="/billing" element={<ProtectedRoute><Billing /></Route>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
 
