@@ -12,7 +12,6 @@ from typing import Optional
 
 import bcrypt
 import jwt
-import httpx
 import hashlib
 import math
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
@@ -39,7 +38,6 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60 * 24  # 1 day
 REFRESH_TOKEN_DAYS = 7
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -288,8 +286,6 @@ class ResetBody(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
-class GoogleSessionBody(BaseModel):
-    session_id: str
 
 
 class ContactBody(BaseModel):
@@ -542,61 +538,6 @@ async def reset_password(body: ResetBody):
     )
     await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True}})
     return {"ok": True}
-
-
-# --- Auth: Google (Emergent Managed OAuth) ---
-@api.post("/auth/google/session")
-async def google_session(body: GoogleSessionBody, response: Response):
-    async with httpx.AsyncClient(timeout=15) as http_client:
-        try:
-            r = await http_client.get(
-                EMERGENT_SESSION_URL,
-                headers={"X-Session-ID": body.session_id},
-            )
-        except httpx.HTTPError as exc:
-            logger.error("Emergent session fetch failed: %s", exc)
-            raise HTTPException(status_code=502, detail="Auth provider unreachable")
-    if r.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    data = r.json()
-    email = (data.get("email") or "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=400, detail="No email returned")
-
-    user = await db.users.find_one({"email": email})
-    if not user:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        user = {
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name") or email.split("@")[0],
-            "picture": data.get("picture"),
-            "provider": "google",
-            "role": "user",
-            "password_hash": None,
-            "subscription": "free",
-            "credits_balance": FREE_REFILL_AMOUNT,
-            "credits_used": 0,
-            "next_credit_date": None,
-            "email_verified": True,  # Google verifies email for us
-            "created_at": now_iso(),
-        }
-        await db.users.insert_one(user)
-    else:
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {
-                "name": user.get("name") or data.get("name") or email.split("@")[0],
-                "picture": data.get("picture") or user.get("picture"),
-                "email_verified": True,
-            }},
-        )
-        user["email_verified"] = True
-
-    access = create_access_token(user["user_id"], email)
-    refresh = create_refresh_token(user["user_id"])
-    set_auth_cookies(response, access, refresh)
-    return public_user(user)
 
 
 # --- Newsletter ---
@@ -1014,67 +955,32 @@ async def update_subscription(body: UpgradeBody, user: dict = Depends(get_curren
 # ---------------------------------------------------------------------------
 @api.post("/generate/optimize")
 async def optimize_prompt(body: OptimizeBody, user: dict = Depends(get_current_user)):
-    # Lazy import so a missing key/library doesn't break unrelated routes.
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    llm_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not llm_key:
-        raise HTTPException(status_code=500, detail="LLM key not configured")
-
     user = await maybe_refill_credits(user)
-    # Pre-flight: ensure enough credits BEFORE calling the LLM, but don't charge yet.
-    if user.get("subscription") != "pro":
-        balance = int(user.get("credits_balance", 0))
-        if balance < OPTIMIZE_COST:
-            raise HTTPException(
-                status_code=402,
-                detail=(
-                    f"Not enough credits. You need {OPTIMIZE_COST} but have {balance}. "
-                    "Upgrade to Pro for unlimited credits."
-                ),
-            )
+    balance = int(user.get("credits_balance", 0))
+    if user.get("subscription") != "pro" and balance < OPTIMIZE_COST:
+        raise HTTPException(status_code=402, detail=f"Not enough credits. You need {OPTIMIZE_COST} but have {balance}. Upgrade to Pro for unlimited credits.")
 
-    system_message = (
-        "You are PromptAI's prompt-engineering co-pilot. Given a user's plain-English "
-        "idea, target AI model and category, produce a single, polished, production-ready "
-        "prompt that is idiomatic for that model and category.\n\n"
-        "Rules:\n"
-        "- Output ONLY the optimized prompt, no preamble, no quotes, no commentary.\n"
-        "- Use the conventions of the target model (e.g. /imagine + parameters for Midjourney, "
-        "  natural-language instructions for ChatGPT/Claude/Gemini, JSON-output framing for coding).\n"
-        "- Keep it under 220 words.\n"
-        "- Preserve all proper nouns and any concrete details from the user's idea."
+    instruction = (
+        "You are PromptAI's prompt-engineering co-pilot. Given a user's plain-English idea, "
+        "target AI model and category, produce one polished, production-ready prompt that is "
+        "idiomatic for that model and category. Output ONLY the optimized prompt, with no preamble, "
+        "quotes or commentary. Preserve proper nouns and concrete details. Keep it under 220 words."
     )
-
-    user_text = (
-        f"Target model: {body.model}\n"
-        f"Category: {body.category}\n"
-        f"User idea:\n{body.idea.strip()}"
-    )
-
+    nl = chr(10)
+    user_text = f"Target model: {body.model}{nl}Category: {body.category}{nl}User idea:{nl}{body.idea.strip()}"
     try:
-        chat = LlmChat(
-            api_key=llm_key,
-            session_id=f"optimize-{user['user_id']}-{uuid.uuid4().hex[:8]}",
-            system_message=system_message,
-        ).with_model("anthropic", "claude-sonnet-4-6")
-        result = await chat.send_message(UserMessage(text=user_text))
+        from services.nimo_client import generate_text
+        optimized = await generate_text(instruction=instruction, user_text=user_text, request_id=f"optimize-{uuid.uuid4().hex[:12]}")
     except Exception as exc:
-        logger.exception("Optimizer call failed")
+        logger.exception("NIMO-CORE optimizer call failed")
         raise HTTPException(status_code=502, detail=f"Optimizer is unavailable right now: {exc}")
 
-    optimized = (result or "").strip()
-    if not optimized:
-        raise HTTPException(status_code=502, detail="Empty response from optimizer")
-
-    # Charge credits AFTER a successful LLM response so failed calls are free.
     user = await consume_credits(user, OPTIMIZE_COST)
-
     history_doc = {
         "history_id": uuid.uuid4().hex,
         "user_id": user["user_id"],
         "kind": "optimize",
-        "promptlet_name": (body.idea.strip().split("\n")[0][:80] or "Custom prompt"),
+        "promptlet_name": (body.idea.strip().split(nl)[0][:80] or "Custom prompt"),
         "category": body.category,
         "model": body.model,
         "idea": body.idea.strip(),
@@ -1083,13 +989,7 @@ async def optimize_prompt(body: OptimizeBody, user: dict = Depends(get_current_u
         "created_at": now_iso(),
     }
     await db.prompt_history.insert_one(history_doc)
-    return {
-        "ok": True,
-        "prompt": optimized,
-        "credits": credit_summary(user),
-        "cost": OPTIMIZE_COST,
-        "history_id": history_doc["history_id"],
-    }
+    return {"ok": True, "prompt": optimized, "credits": credit_summary(user), "cost": OPTIMIZE_COST, "history_id": history_doc["history_id"]}
 
 
 @api.post("/generate/save")
@@ -1232,51 +1132,27 @@ CONVERT_COST = 3
 
 @api.post("/convert")
 async def convert_prompt(body: ConvertBody, user: dict = Depends(get_current_user)):
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    llm_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not llm_key:
-        raise HTTPException(status_code=500, detail="LLM key not configured")
-
     user = await maybe_refill_credits(user)
-    if user.get("subscription") != "pro":
-        balance = int(user.get("credits_balance", 0))
-        if balance < CONVERT_COST:
-            raise HTTPException(status_code=402, detail=f"Need {CONVERT_COST} credits, have {balance}.")
+    balance = int(user.get("credits_balance", 0))
+    if user.get("subscription") != "pro" and balance < CONVERT_COST:
+        raise HTTPException(status_code=402, detail=f"Need {CONVERT_COST} credits, have {balance}.")
 
-    system_message = (
-        "You are PromptAI's prompt converter. Convert a prompt written for one AI model "
-        "into the idiomatic, production-ready form for a different AI model.\n\n"
-        "Rules:\n"
-        "- Output ONLY the converted prompt. No preamble, no quotes, no commentary.\n"
-        "- Honor the syntax of the TARGET model (e.g. /imagine + --ar/--v parameters for "
-        "Midjourney; natural instructions for ChatGPT/Claude/Gemini; JSON-output framing for "
-        "coding/agent models).\n"
-        "- Preserve all concrete details and intent from the original prompt.\n"
-        "- Keep under 240 words."
+    instruction = (
+        "You are PromptAI's prompt converter. Convert a prompt written for one AI model into the "
+        "idiomatic, production-ready form for another AI model. Output ONLY the converted prompt, "
+        "with no preamble, quotes or commentary. Preserve all concrete details and intent. "
+        "Keep it under 240 words."
     )
-    user_text = (
-        f"SOURCE MODEL: {body.source_model}\n"
-        f"TARGET MODEL: {body.target_model}\n\n"
-        f"ORIGINAL PROMPT:\n{body.prompt.strip()}"
-    )
+    nl = chr(10)
+    user_text = f"SOURCE MODEL: {body.source_model}{nl}TARGET MODEL: {body.target_model}{nl}{nl}ORIGINAL PROMPT:{nl}{body.prompt.strip()}"
     try:
-        chat = LlmChat(
-            api_key=llm_key,
-            session_id=f"convert-{user['user_id']}-{uuid.uuid4().hex[:8]}",
-            system_message=system_message,
-        ).with_model("anthropic", "claude-sonnet-4-6")
-        result = await chat.send_message(UserMessage(text=user_text))
+        from services.nimo_client import generate_text
+        converted = await generate_text(instruction=instruction, user_text=user_text, request_id=f"convert-{uuid.uuid4().hex[:12]}")
     except Exception as exc:
-        logger.exception("Converter call failed")
+        logger.exception("NIMO-CORE converter call failed")
         raise HTTPException(status_code=502, detail=f"Converter is unavailable right now: {exc}")
 
-    converted = (result or "").strip()
-    if not converted:
-        raise HTTPException(status_code=502, detail="Empty response from converter")
-
     user = await consume_credits(user, CONVERT_COST)
-
     history_doc = {
         "history_id": uuid.uuid4().hex,
         "user_id": user["user_id"],
@@ -1290,12 +1166,7 @@ async def convert_prompt(body: ConvertBody, user: dict = Depends(get_current_use
         "created_at": now_iso(),
     }
     await db.prompt_history.insert_one(history_doc)
-    return {
-        "ok": True,
-        "prompt": converted,
-        "credits": credit_summary(user),
-        "cost": CONVERT_COST,
-    }
+    return {"ok": True, "prompt": converted, "credits": credit_summary(user), "cost": CONVERT_COST}
 
 
 # ---------------------------------------------------------------------------
