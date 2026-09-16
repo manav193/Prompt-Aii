@@ -4,8 +4,6 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "@/pages/Landing";
-import SignIn from "@/pages/SignIn";
-import SignUp from "@/pages/SignUp";
 import Dashboard from "@/pages/Dashboard";
 import Generate from "@/pages/Generate";
 import ReversePrompt from "@/pages/ReversePrompt";
@@ -19,19 +17,18 @@ import Saved from "@/pages/Saved";
 import Billing from "@/pages/Billing";
 import Settings from "@/pages/Settings";
 import Admin from "@/pages/Admin";
-import ForgotPassword from "@/pages/ForgotPassword";
-import ResetPassword from "@/pages/ResetPassword";
-import VerifyEmail from "@/pages/VerifyEmail";
 
 function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
-      <Route path="/signin" element={<SignIn />} />
-      <Route path="/signup" element={<SignUp />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/verify-email" element={<VerifyEmail />} />
+
+      {/* Authentication UI is temporarily hidden while the auth flow is being finalized. */}
+      <Route path="/signin" element={<Navigate to="/" replace />} />
+      <Route path="/signup" element={<Navigate to="/" replace />} />
+      <Route path="/forgot-password" element={<Navigate to="/" replace />} />
+      <Route path="/reset-password" element={<Navigate to="/" replace />} />
+      <Route path="/verify-email" element={<Navigate to="/" replace />} />
 
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/generate" element={<ProtectedRoute><Generate /></ProtectedRoute>} />
