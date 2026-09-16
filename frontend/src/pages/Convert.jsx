@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import DashboardLayout from "@/components/DashboardLayout";
 import { api, formatApiErrorDetail } from "@/lib/api";
 
-const MODELS = ["ChatGPT", "Claude", "Gemini", "Midjourney", "Adobe Firefly", "Flux", "Stable Diffusion", "Cursor", "Lovable", "Emergent"];
+const MODELS = ["ChatGPT", "Claude", "Gemini", "Midjourney", "Adobe Firefly", "Flux", "Stable Diffusion", "Cursor", "Lovable"];
 const CONVERT_COST = 3;
 
 export default function Convert() {
@@ -60,7 +60,7 @@ export default function Convert() {
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-cyan">Prompt Converter</p>
             <h1 className="font-display mt-2 text-3xl sm:text-4xl font-semibold tracking-tighter">Move prompts between models.</h1>
-            <p className="mt-2 text-[#94A3B8]">Claude Sonnet 4.6 rewrites your prompt in the target model's native idiom.</p>
+            <p className="mt-2 text-[#94A3B8]">PromptAI converts prompts through its own AI service layer.</p>
           </div>
           <div className="glass rounded-2xl px-4 py-3 inline-flex items-center gap-3">
             <Coins className="h-4 w-4 text-cyan" />
