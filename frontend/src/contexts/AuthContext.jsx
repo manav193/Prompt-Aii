@@ -4,7 +4,7 @@ import { api, formatApiErrorDetail } from "@/lib/api";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);     // user object | null | false
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const fetchMe = useCallback(async () => {
@@ -21,12 +21,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // CRITICAL: if returning from Emergent OAuth (hash carries session_id),
-    // let AuthCallback handle the exchange first; skip /auth/me here.
-    if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
-      setLoading(false);
-      return;
-    }
     fetchMe();
   }, [fetchMe]);
 
