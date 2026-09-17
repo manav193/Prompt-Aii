@@ -10,8 +10,18 @@ class NimoCoreError(RuntimeError):
     """Raised when NIMO-CORE cannot complete an intelligence request."""
 
 
-async def generate_text(*, instruction: str, user_text: str, request_id: Optional[str] = None) -> str:
-    """Ask NIMO-CORE for a single text result without exposing provider keys to PromptAI."""
+async def generate_text(
+    *,
+    instruction: str,
+    user_text: str,
+    request_id: Optional[str] = None,
+    context: Optional[dict] = None,
+) -> str:
+    """Ask NIMO-CORE for a single text result without exposing provider keys to PromptAI.
+
+    ``context`` is optional and bounded to JSON-object metadata. Prompt-Aii uses it
+    to identify the governed project context without sending provider credentials.
+    """
     base_url = os.environ.get("NIMO_CORE_URL", "http://localhost:8787").rstrip("/")
     timeout = float(os.environ.get("NIMO_CORE_TIMEOUT_MS", "15000")) / 1000
     integration_key = os.environ.get("NIMO_INTEGRATION_KEY")
@@ -23,11 +33,20 @@ async def generate_text(*, instruction: str, user_text: str, request_id: Optiona
     if integration_key:
         headers["Authorization"] = f"Bearer {integration_key}"
 
+    safe_context = context if isinstance(context, dict) else {}
+    # Keep the integration contract intentionally small: project identity and
+    # governance mode are metadata, never credentials or raw conversation state.
+    safe_context = {
+        key: value
+        for key, value in safe_context.items()
+        if key in {"projectId", "governedKnowledge"} and isinstance(value, str)
+    }
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 f"{base_url}/api/nimo/chat",
-                json={"message": message},
+                json={"message": message, "context": safe_context},
                 headers=headers,
             )
             response.raise_for_status()
