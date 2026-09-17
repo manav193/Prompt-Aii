@@ -9,12 +9,17 @@ import PromptFeedback from "@/components/PromptFeedback";
 
 const MODELS = ["ChatGPT", "Claude", "Gemini", "Midjourney", "Stable Diffusion", "Flux", "Adobe Firefly", "Cursor", "Lovable"];
 const CATEGORIES = ["Photo", "Website", "Coding", "App Development", "Marketing", "Writing", "Video", "Image Editing", "Business", "AI Agents"];
+const PROMPT_DEPTHS = [
+  { value: "deep", label: "Deep", description: "Detailed, model-specific prompt" },
+  { value: "high-level", label: "High-level", description: "Concise strategic prompt" },
+];
 const OPTIMIZE_COST = 3;
 
 export default function Generate() {
   const { user } = useAuth();
   const [model, setModel] = useState("ChatGPT");
   const [category, setCategory] = useState("Writing");
+  const [promptDepth, setPromptDepth] = useState("deep");
   const [idea, setIdea] = useState("");
   const [optimized, setOptimized] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,10 +50,11 @@ export default function Generate() {
     const feedbackRequestId = globalThis.crypto?.randomUUID?.() || `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     setRequestId(feedbackRequestId);
     try {
-      const { data } = await api.post("/generate/optimize", { idea, model, category, request_id: feedbackRequestId });
+      const requestIdea = `Prompt depth: ${promptDepth}\n${idea.trim()}`;
+      const { data } = await api.post("/generate/optimize", { idea: requestIdea, model, category, request_id: feedbackRequestId });
       setOptimized(data.prompt);
       setCredits(data.credits);
-      toast.success(`Optimized for ${model} · −${data.cost} credits`);
+      toast.success(`Optimized for ${model} · ${promptDepth === "deep" ? "Deep" : "High-level"} · −${data.cost} credits`);
       loadHistory();
       setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
     } catch (err) {
@@ -122,7 +128,7 @@ export default function Generate() {
         </header>
 
         <form onSubmit={optimize} className="glass-strong rounded-2xl p-6 grid gap-5" data-testid="generator-form">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <Field label="AI Model" testid="model-field">
               <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white ring-focus appearance-none" data-testid="model-select">
                 {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -132,6 +138,12 @@ export default function Generate() {
               <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white ring-focus appearance-none" data-testid="category-select">
                 {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
+            </Field>
+            <Field label="Prompt depth" testid="depth-field">
+              <select value={promptDepth} onChange={(e) => setPromptDepth(e.target.value)} className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white ring-focus appearance-none" data-testid="depth-select">
+                {PROMPT_DEPTHS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+              <span className="block mt-1.5 text-[11px] text-[#64748B]">{PROMPT_DEPTHS.find((d) => d.value === promptDepth)?.description}</span>
             </Field>
           </div>
 
@@ -154,8 +166,8 @@ export default function Generate() {
 
         <div ref={outputRef} className="mt-6 glass rounded-2xl p-6" data-testid="generator-output">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4 text-cyan" /><span className="text-xs uppercase tracking-wider text-[#94A3B8]">Optimized prompt</span>{optimized && <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/10 text-[#94A3B8]">{model}</span>}</div>
-            {optimized && <div className="flex items-center gap-2"><IconBtn onClick={copy} icon={copied ? Check : Copy} label={copied ? "Copied" : "Copy"} testid="output-copy" active={copied} /><IconBtn onClick={save} icon={Save} label={savedId ? "Saved" : "Save"} testid="output-save" active={!!savedId} /><IconBtn onClick={toggleFav} icon={Heart} label={favorited ? "Favorited" : "Favorite"} testid="output-favorite" active={favorited} /><IconBtn onClick={exportText} icon={Download} label="Export" testid="output-export" /></div>}
+            <div className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4 text-cyan" /><span className="text-xs uppercase tracking-wider text-[#94A3B8]">Optimized prompt</span>{optimized && <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/10 text-[#94A3B8]">{model} · {promptDepth}</span>}</div>
+            {optimized && <div className="flex items-center gap-2"><IconBtn onClick={copy} icon={copied ? Check : Copy} label={copied ? "Copied" : "Copy"} testid="output-copy" active={copied} /><IconBtn onClick={save} icon={Save} label={savedId ? "Saved" : "Save"} testid="output-save" active={!!savedId} /><IconBtn onClick={toggleFav} icon={Heart} label={favorited ? "Favorited" : "Favorite"} testid="output-favorite" active={favorited} /><IconBtn onClick={exportText} icon={Download} label="Export" testid="output-export" active={false} /></div>}
           </div>
           <pre className="mt-4 whitespace-pre-wrap text-[14.5px] leading-relaxed font-mono-pa text-white/90 min-h-[140px]" data-testid="output-text">{optimized || (loading ? "Generating..." : "Your optimized prompt will appear here.")}</pre>
           <PromptFeedback idea={idea} prompt={optimized} model={model} category={category} requestId={requestId} />
