@@ -7,6 +7,12 @@ import { api, formatApiErrorDetail } from "@/lib/api";
 
 const NIMO_CORE_URL = (process.env.REACT_APP_NIMO_CORE_URL || "").replace(/\/$/, "");
 const REVERSE_PROMPT_COST = 3;
+const TARGET_MODELS = [
+  { value: "Midjourney", label: "Midjourney" },
+  { value: "Stable Diffusion", label: "Stable Diffusion" },
+  { value: "Flux", label: "Flux" },
+  { value: "Adobe Firefly", label: "Adobe Firefly" },
+];
 
 export default function ReversePrompt() {
   const inputRef = useRef(null);
@@ -15,6 +21,7 @@ export default function ReversePrompt() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [credits, setCredits] = useState(null);
+  const [targetModel, setTargetModel] = useState("Midjourney");
 
   useEffect(() => {
     api.get("/me/usage").then(({ data }) => setCredits(data)).catch(() => {});
@@ -49,6 +56,7 @@ export default function ReversePrompt() {
       const body = new FormData();
       body.append("image", file);
       body.append("detail", "high");
+      body.append("target_model", targetModel);
       const response = await fetch(`${NIMO_CORE_URL}/api/nimo/reverse-prompt`, {
         method: "POST",
         body,
@@ -58,7 +66,6 @@ export default function ReversePrompt() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || data.message || `Request failed (${response.status})`);
       setResult(data);
-      // Credits remain authoritative on Prompt-Aii's backend; refresh after NIMO analysis.
       api.get("/me/usage").then(({ data: usage }) => setCredits(usage)).catch(() => {});
       toast.success("Image analyzed. Reverse prompt generated.");
     } catch (err) {
@@ -111,6 +118,21 @@ export default function ReversePrompt() {
               <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => selectFile(e.target.files?.[0])} />
             </div>
 
+            <div className="mt-5">
+              <label htmlFor="reverse-target-model" className="block text-xs uppercase tracking-wider text-[#94A3B8] mb-2">Reconstruct for</label>
+              <select
+                id="reverse-target-model"
+                value={targetModel}
+                onChange={(e) => setTargetModel(e.target.value)}
+                disabled={loading}
+                className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan/50"
+                data-testid="reverse-target-model"
+              >
+                {TARGET_MODELS.map((model) => <option key={model.value} value={model.value} className="bg-[#0F172A]">{model.label}</option>)}
+              </select>
+              <p className="text-[11px] text-[#64748B] mt-2">The reconstruction guidance is adapted to the selected image model.</p>
+            </div>
+
             <div className="mt-5 flex items-center justify-between gap-3 flex-wrap">
               <div className="text-xs text-[#94A3B8] inline-flex items-center gap-2">
                 <Sparkles className="h-3.5 w-3.5 text-cyan" /> Cost: <span className="text-white font-medium">{REVERSE_PROMPT_COST} credits</span>
@@ -142,7 +164,8 @@ export default function ReversePrompt() {
 
             {result ? (
               <>
-                <pre className="mt-4 whitespace-pre-wrap text-[14px] leading-relaxed font-mono-pa text-white/90">{result.prompt}</pre>
+                <div className="mt-4 inline-flex items-center rounded-full border border-cyan/20 bg-cyan/5 px-2.5 py-1 text-[11px] text-cyan">Target: {result.target_model || targetModel}</div>
+                <pre className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed font-mono-pa text-white/90">{result.prompt}</pre>
                 {result.negative_prompt && (
                   <div className="mt-5">
                     <p className="text-xs uppercase tracking-wider text-[#94A3B8] mb-2">Negative prompt</p>
