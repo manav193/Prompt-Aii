@@ -47,13 +47,14 @@ async def generate_text(
 
     # The existing optimizer endpoint encodes its target model/category in the
     # user text. Resolve those bounded values here so model strategy is applied
-    # without requiring a risky server.py rewrite. Callers that need high-level
-    # mode can provide promptDepth explicitly; deep remains the safe default.
+    # without requiring a risky server.py rewrite. Callers can provide depth in
+    # governed context or as a bounded metadata line in user_text.
     model_match = re.search(r"^Target model:\s*(.+)$", user_text, re.MULTILINE | re.IGNORECASE)
     category_match = re.search(r"^Category:\s*(.+)$", user_text, re.MULTILINE | re.IGNORECASE)
+    depth_match = re.search(r"^Prompt depth:\s*(deep|high-level)\s*$", user_text, re.MULTILINE | re.IGNORECASE)
     model = model_match.group(1).strip() if model_match else ""
     category = category_match.group(1).strip() if category_match else "general"
-    depth = safe_context.get("promptDepth", "deep")
+    depth = safe_context.get("promptDepth") or (depth_match.group(1).lower() if depth_match else "deep")
     if model:
         try:
             strategy = resolve_model_strategy(model, depth)
