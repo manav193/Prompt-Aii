@@ -20,6 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 from promptlets_data import PROMPTLETS
+from services.feedback import register_feedback_routes
 from collections_data import (
     COLLECTIONS,
     CATEGORY_DEFAULTS,
@@ -1512,6 +1513,7 @@ async def on_shutdown():
 # ---------------------------------------------------------------------------
 # CORS + mount router
 # ---------------------------------------------------------------------------
+register_feedback_routes(api, db, get_current_user)
 app.include_router(api)
 
 cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", FRONTEND_URL).split(",") if o.strip()]

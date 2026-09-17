@@ -5,6 +5,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { api, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link } from "react-router-dom";
+import PromptFeedback from "@/components/PromptFeedback";
 
 const MODELS = ["ChatGPT", "Claude", "Gemini", "Midjourney", "Stable Diffusion", "Flux", "Adobe Firefly", "Cursor", "Lovable"];
 const CATEGORIES = ["Photo", "Website", "Coding", "App Development", "Marketing", "Writing", "Video", "Image Editing", "Business", "AI Agents"];
@@ -22,6 +23,7 @@ export default function Generate() {
   const [copied, setCopied] = useState(false);
   const [favorited, setFavorited] = useState(false);
   const [savedId, setSavedId] = useState(null);
+  const [requestId, setRequestId] = useState(null);
   const outputRef = useRef(null);
 
   const loadCredits = () => api.get("/me/usage").then(({ data }) => setCredits(data));
@@ -40,8 +42,10 @@ export default function Generate() {
     setLoading(true);
     setOptimized("");
     setCopied(false); setFavorited(false); setSavedId(null);
+    const feedbackRequestId = globalThis.crypto?.randomUUID?.() || `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    setRequestId(feedbackRequestId);
     try {
-      const { data } = await api.post("/generate/optimize", { idea, model, category });
+      const { data } = await api.post("/generate/optimize", { idea, model, category, request_id: feedbackRequestId });
       setOptimized(data.prompt);
       setCredits(data.credits);
       toast.success(`Optimized for ${model} · −${data.cost} credits`);
@@ -154,6 +158,7 @@ export default function Generate() {
             {optimized && <div className="flex items-center gap-2"><IconBtn onClick={copy} icon={copied ? Check : Copy} label={copied ? "Copied" : "Copy"} testid="output-copy" active={copied} /><IconBtn onClick={save} icon={Save} label={savedId ? "Saved" : "Save"} testid="output-save" active={!!savedId} /><IconBtn onClick={toggleFav} icon={Heart} label={favorited ? "Favorited" : "Favorite"} testid="output-favorite" active={favorited} /><IconBtn onClick={exportText} icon={Download} label="Export" testid="output-export" /></div>}
           </div>
           <pre className="mt-4 whitespace-pre-wrap text-[14.5px] leading-relaxed font-mono-pa text-white/90 min-h-[140px]" data-testid="output-text">{optimized || (loading ? "Generating..." : "Your optimized prompt will appear here.")}</pre>
+          <PromptFeedback idea={idea} prompt={optimized} model={model} category={category} requestId={requestId} />
         </div>
 
         <div className="mt-10">
