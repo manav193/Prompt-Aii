@@ -42,10 +42,11 @@ export default function Convert() {
     if (insufficient) return toast.error(`You need ${totalCost} credits for ${targets.length} model variants.`);
     setLoading(true); setConverted([]); setCopied(null);
     try {
-      const results = await Promise.all(targets.map(async (target) => {
+      const results = [];
+      for (const target of targets) {
         const { data } = await api.post("/convert", { prompt, source_model: source, target_model: target });
-        return { target, prompt: data.prompt };
-      }));
+        results.push({ target, prompt: data.prompt });
+      }
       setConverted(results);
       const { data } = await api.get("/me/usage");
       setCredits(data);
