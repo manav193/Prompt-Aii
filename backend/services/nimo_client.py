@@ -10,6 +10,10 @@ class NimoCoreError(RuntimeError):
     """Raised when NIMO-CORE cannot complete an intelligence request."""
 
 
+PROMPT_AII_PROJECT_ID = "prompt-aii"
+PROMPT_AII_KNOWLEDGE_ID = "kno-20260917-prompt-aii-deep-prompt-engineering"
+
+
 async def generate_text(
     *,
     instruction: str,
@@ -41,6 +45,11 @@ async def generate_text(
         for key, value in safe_context.items()
         if key in {"projectId", "governedKnowledge"} and isinstance(value, str)
     }
+    # Every Prompt-Aii request participates in the governed NIMO context by
+    # default. Callers may still override these values only with other strings;
+    # no credentials or raw conversation state are introduced here.
+    safe_context.setdefault("projectId", PROMPT_AII_PROJECT_ID)
+    safe_context.setdefault("governedKnowledge", PROMPT_AII_KNOWLEDGE_ID)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
